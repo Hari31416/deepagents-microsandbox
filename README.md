@@ -110,6 +110,33 @@ Notes:
 - `reference_modules/deepagents/` is a local reference checkout used during design and integration work
 - `reference_modules/microsandbox-executor/` is retained as historical reference material
 
+## Local Infrastructure
+
+Phase 1 infrastructure is defined in [docker-compose.yml](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/docker-compose.yml).
+
+It currently provisions:
+
+- Postgres
+- MinIO
+- Redis
+- an init job that ensures the MinIO bucket exists
+
+To get started locally:
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+Default local endpoints:
+
+- Postgres: `localhost:5432`
+- MinIO API: `localhost:9000`
+- MinIO console: `localhost:9001`
+- Redis: `localhost:6379`
+
+This infrastructure is intended to be shared by the upcoming `backend/` app and the existing `microsandbox-executor/` service.
+
 ## Planned Backend Responsibilities
 
 The backend will be the public API surface for the product.
