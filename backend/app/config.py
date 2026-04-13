@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     api_prefix: str = "/api"
     default_user_id: str = "dev-user"
+    agent_model: str = "openai:gpt-4o-mini"
     database_url: str = Field(
         default="postgresql+psycopg://deepagent:deepagent_password@localhost:5432/deepagent"
     )

@@ -1,7 +1,6 @@
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from uuid import uuid4
 
+from app.db.repositories import FileRepository
 from app.services.thread_service import ThreadService
 from app.storage.minio import MinioStorage
 
@@ -20,10 +19,15 @@ class FileRecord:
 
 
 class FileService:
-    def __init__(self, thread_service: ThreadService, storage: MinioStorage) -> None:
+    def __init__(
+        self,
+        thread_service: ThreadService,
+        storage: MinioStorage,
+        repository: FileRepository,
+    ) -> None:
         self._thread_service = thread_service
         self._storage = storage
-        self._files: dict[str, FileRecord] = {}
+        self._repository = repository
 
     def create_upload_ticket(
         self,
@@ -35,7 +39,7 @@ class FileService:
         purpose: str,
     ) -> dict[str, object]:
         self._require_owned_thread(owner_id, thread_id)
-        file_id = str(uuid4())
+        file_id = self._storage.allocate_file_id()
         object_key = f"threads/{thread_id}/{purpose}s/{file_id}/{filename}"
         ticket = self._storage.create_presigned_upload(object_key)
         return {
@@ -60,19 +64,16 @@ class FileService:
         purpose: str,
     ) -> dict[str, object]:
         self._require_owned_thread(owner_id, thread_id)
-        record = FileRecord(
-            file_id=str(uuid4()),
+        record = self._repository.create_file(
             thread_id=thread_id,
             object_key=object_key,
-            original_filename=original_filename,
+            filename=original_filename,
+            kind=purpose,
             content_type=content_type,
             size=size,
-            purpose=purpose,
             status="uploaded",
-            created_at=datetime.now(timezone.utc).isoformat(),
         )
-        self._files[record.file_id] = record
-        return asdict(record)
+        return asdict(self._to_record(record))
 
     def create_download_ticket(
         self,
@@ -94,9 +95,7 @@ class FileService:
 
     def list_files(self, owner_id: str, thread_id: str) -> list[dict[str, object]]:
         self._require_owned_thread(owner_id, thread_id)
-        records = [record for record in self._files.values() if record.thread_id == thread_id]
-        records.sort(key=lambda item: item.created_at, reverse=True)
-        return [asdict(record) for record in records]
+        return [asdict(self._to_record(record)) for record in self._repository.list_files(thread_id=thread_id)]
 
     def _require_owned_thread(self, owner_id: str, thread_id: str) -> None:
         if self._thread_service.get_thread_for_owner(owner_id=owner_id, thread_id=thread_id) is None:
@@ -105,7 +104,21 @@ class FileService:
     def _resolve_file_id(self, thread_id: str, file_id: str | None) -> str:
         if file_id is None:
             raise ValueError("Either file_id or object_key is required")
-        record = self._files.get(file_id)
-        if record is None or record.thread_id != thread_id:
+        record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
+        if record is None:
             raise ValueError("File not found")
         return record.object_key
+
+    @staticmethod
+    def _to_record(record) -> FileRecord:
+        return FileRecord(
+            file_id=record.id,
+            thread_id=record.thread_id,
+            object_key=record.object_key,
+            original_filename=record.filename,
+            content_type=record.content_type,
+            size=record.size,
+            purpose=record.kind,
+            status=record.status,
+            created_at=record.created_at.isoformat(),
+        )

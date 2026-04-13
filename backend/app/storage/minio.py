@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from minio import Minio
 
@@ -27,6 +28,10 @@ class MinioStorage:
     @property
     def bucket_name(self) -> str:
         return self._settings.minio_bucket
+
+    @staticmethod
+    def allocate_file_id() -> str:
+        return str(uuid4())
 
     def create_presigned_upload(self, object_key: str) -> PresignedUrl:
         expires = timedelta(seconds=self._settings.presigned_url_expiry_seconds)

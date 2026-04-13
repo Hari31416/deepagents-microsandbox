@@ -1,9 +1,3 @@
-"""Repository-shaped stubs for the future Postgres-backed implementation."""
+from app.db.repositories import FileRepository, SandboxSessionRepository, ThreadRepository
 
-
-class ThreadRepository:
-    def create_thread(self, *args, **kwargs):
-        raise NotImplementedError("Phase 3 will replace the in-memory thread service with Postgres.")
-
-    def get_thread(self, *args, **kwargs):
-        raise NotImplementedError("Phase 3 will replace the in-memory thread service with Postgres.")
+__all__ = ["FileRepository", "SandboxSessionRepository", "ThreadRepository"]

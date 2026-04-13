@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from app.config import Settings, get_settings
+from app.db.repositories import FileRepository, ThreadRepository
+from app.db.session import get_session_factory, init_database
 from app.services.file_service import FileService
 from app.services.stream_service import StreamService
 from app.services.thread_service import ThreadService
@@ -19,9 +21,17 @@ class ServiceContainer:
 @lru_cache(maxsize=1)
 def get_services() -> ServiceContainer:
     settings = get_settings()
-    thread_service = ThreadService()
+    init_database()
+    session_factory = get_session_factory()
+    thread_repository = ThreadRepository(session_factory=session_factory)
+    file_repository = FileRepository(session_factory=session_factory)
+    thread_service = ThreadService(repository=thread_repository)
     minio_storage = MinioStorage(settings)
-    file_service = FileService(thread_service=thread_service, storage=minio_storage)
+    file_service = FileService(
+        thread_service=thread_service,
+        storage=minio_storage,
+        repository=file_repository,
+    )
     stream_service = StreamService(thread_service=thread_service)
     return ServiceContainer(
         settings=settings,
