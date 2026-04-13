@@ -122,10 +122,11 @@ class StreamService:
         enriched_message = message
         if workspace_files:
             file_inventory = "\n".join(
-                f"- {file['original_filename']} (file_id: {file['file_id']})"
+                f"- /workspace/{file['original_filename']} (file_id: {file['file_id']})"
                 for file in workspace_files
             )
             enriched_message = (
+                "Workspace files are mounted under /workspace in the sandbox.\n"
                 "Workspace files currently available in the sandbox:\n"
                 f"{file_inventory}\n\n"
                 "User request:\n"
@@ -142,7 +143,7 @@ class StreamService:
                 "user_id": owner_id,
                 "thread_id": thread_id,
                 "selected_file_ids": selected_file_ids,
-                "workspace_files": [str(file["original_filename"]) for file in workspace_files],
+                "workspace_files": [f"/workspace/{file['original_filename']}" for file in workspace_files],
             },
             "stream_mode": self._settings.langgraph_stream_mode,
         }

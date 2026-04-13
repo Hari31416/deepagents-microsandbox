@@ -146,8 +146,9 @@ def test_stream_service_stages_thread_uploads_when_request_omits_file_ids() -> N
                 {
                     "role": "user",
                     "content": (
+                        "Workspace files are mounted under /workspace in the sandbox.\n"
                         "Workspace files currently available in the sandbox:\n"
-                        "- iris.csv (file_id: file-1)\n\n"
+                        "- /workspace/iris.csv (file_id: file-1)\n\n"
                         "User request:\n"
                         "What columns are in the file?"
                     ),
@@ -159,7 +160,7 @@ def test_stream_service_stages_thread_uploads_when_request_omits_file_ids() -> N
             "user_id": "user-1",
             "thread_id": "thread-1",
             "selected_file_ids": ["file-1"],
-            "workspace_files": ["iris.csv"],
+            "workspace_files": ["/workspace/iris.csv"],
         },
         "stream_mode": "updates",
     }
