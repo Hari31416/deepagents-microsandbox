@@ -1,6 +1,11 @@
-import asyncio
-import json
+from __future__ import annotations
 
+import json
+from typing import Any
+
+import httpx
+
+from app.config import Settings
 from app.services.thread_service import ThreadService
 
 
@@ -9,8 +14,15 @@ def _sse(event: str, data: dict[str, object]) -> str:
 
 
 class StreamService:
-    def __init__(self, thread_service: ThreadService) -> None:
+    def __init__(
+        self,
+        thread_service: ThreadService,
+        settings: Settings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._thread_service = thread_service
+        self._settings = settings
+        self._transport = transport
 
     async def stream_chat(
         self,
@@ -23,16 +35,99 @@ class StreamService:
             yield _sse("error", {"detail": "Thread not found"})
             return
 
-        yield _sse("status", {"state": "accepted", "thread_id": thread_id})
-        await asyncio.sleep(0)
-        yield _sse("message", {"role": "assistant", "delta": "Streaming placeholder response."})
-        await asyncio.sleep(0)
-        yield _sse(
-            "message",
-            {
-                "role": "assistant",
-                "delta": f" Received message of length {len(message)} with {len(selected_file_ids)} selected files.",
+        async with httpx.AsyncClient(
+            base_url=self._settings.langgraph_base_url.rstrip("/"),
+            timeout=None,
+            transport=self._transport,
+            headers=self._request_headers(owner_id=owner_id, thread_id=thread_id),
+        ) as client:
+            thread_error = await self._ensure_langgraph_thread(
+                client=client,
+                owner_id=owner_id,
+                thread_id=thread_id,
+            )
+            if thread_error is not None:
+                yield _sse("error", {"detail": thread_error})
+                return
+
+            async with client.stream(
+                "POST",
+                f"/threads/{thread_id}/runs/stream",
+                json=self._build_run_payload(
+                    owner_id=owner_id,
+                    thread_id=thread_id,
+                    message=message,
+                    selected_file_ids=selected_file_ids,
+                ),
+            ) as response:
+                if not response.is_success:
+                    yield _sse("error", {"detail": await self._response_error(response)})
+                    return
+
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+
+    async def _ensure_langgraph_thread(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        owner_id: str,
+        thread_id: str,
+    ) -> str | None:
+        response = await client.post(
+            "/threads",
+            json={
+                "thread_id": thread_id,
+                "metadata": {"owner_id": owner_id},
             },
         )
-        await asyncio.sleep(0)
-        yield _sse("done", {"thread_id": thread_id})
+        if response.status_code in {200, 201, 409}:
+            return None
+        return await self._response_error(response)
+
+    def _build_run_payload(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        message: str,
+        selected_file_ids: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "assistant_id": self._settings.langgraph_assistant_id,
+            "input": {
+                "messages": [{"role": "user", "content": message}],
+                "selected_file_ids": selected_file_ids,
+            },
+            "context": {
+                "user_id": owner_id,
+                "thread_id": thread_id,
+                "selected_file_ids": selected_file_ids,
+            },
+            "stream_mode": self._settings.langgraph_stream_mode,
+        }
+
+    @staticmethod
+    def _request_headers(*, owner_id: str, thread_id: str) -> dict[str, str]:
+        return {
+            "X-User-Id": owner_id,
+            "X-Thread-Id": thread_id,
+            "Accept": "text/event-stream",
+        }
+
+    @staticmethod
+    async def _response_error(response: httpx.Response) -> str:
+        try:
+            payload = await response.aread()
+        except httpx.HTTPError:
+            return f"LangGraph request failed with HTTP {response.status_code}"
+
+        if not payload:
+            return f"LangGraph request failed with HTTP {response.status_code}"
+
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return payload.decode("utf-8", errors="replace")
+        return str(decoded.get("detail") or decoded.get("error") or f"HTTP {response.status_code}")

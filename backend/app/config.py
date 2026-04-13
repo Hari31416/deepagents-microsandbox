@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     )
     executor_base_url: str = "http://localhost:3000"
     langgraph_base_url: str = "http://localhost:8123"
+    langgraph_assistant_id: str = "data-analyst"
+    langgraph_stream_mode: str = "updates"
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadminpassword"
