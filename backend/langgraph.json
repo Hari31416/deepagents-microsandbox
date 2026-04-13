@@ -1,0 +1,10 @@
+{
+  "graphs": {
+    "data-analyst": "app.agent.graph:build_langgraph_app"
+  },
+  "http": {
+    "configurable_headers": {
+      "includes": ["x-user-id", "x-thread-id", "x-org-id"]
+    }
+  }
+}
