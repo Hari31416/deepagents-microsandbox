@@ -6,5 +6,6 @@
     "configurable_headers": {
       "includes": ["x-user-id", "x-thread-id", "x-org-id"]
     }
-  }
+  },
+  "dependencies": ["."]
 }

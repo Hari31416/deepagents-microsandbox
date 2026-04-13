@@ -1,0 +1,150 @@
+import { useState, useRef } from "react"
+import { Send, Paperclip, X, FileText, Loader2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { useStore } from "@/store/use-store"
+import { filesApi, threadsApi } from "@/lib/api-client"
+
+interface ChatInputProps {
+  onSend: (message: string, fileIds: string[]) => void
+  disabled?: boolean
+}
+
+export function ChatInput({ onSend, disabled }: ChatInputProps) {
+  const [input, setInput] = useState("")
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const { activeThreadId, setThreadFiles } = useStore()
+
+  const handleSend = () => {
+    if (!input.trim() && selectedFiles.length === 0) return
+    
+    // In a real scenario, we might want to ensure uploads are finished
+    // For this simple version, we'll assume fileIds are already managed 
+    // or passed back after upload.
+    onSend(input, []) // Selected file IDs would go here
+    setInput("")
+    setSelectedFiles([])
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0 || !activeThreadId) return
+
+    setIsUploading(true)
+    try {
+      for (const file of files) {
+        // Presign
+        const presign = await filesApi.presignUpload({
+          thread_id: activeThreadId,
+          filename: file.name,
+          content_type: file.type || "application/octet-stream",
+          size: file.size,
+          purpose: "upload"
+        })
+
+        // PUT to MinIO
+        await fetch(presign.url, {
+          method: "PUT",
+          body: file,
+          headers: presign.required_headers
+        })
+
+        // Complete
+        await filesApi.completeUpload({
+          thread_id: activeThreadId,
+          object_key: presign.object_key,
+          original_filename: file.name,
+          content_type: file.type || "application/octet-stream",
+          size: file.size,
+          purpose: "upload"
+        })
+      }
+
+      // Refresh file list
+      const { files: updatedFiles } = await threadsApi.getFiles(activeThreadId)
+      setThreadFiles(activeThreadId, updatedFiles)
+      
+    } catch (err) {
+      console.error("Upload failed:", err)
+    } finally {
+      setIsUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {selectedFiles.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {selectedFiles.map((file, i) => (
+            <div key={i} className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-xs">
+              <FileText className="h-3 w-3" />
+              <span className="truncate max-w-[100px]">{file.name}</span>
+              <button 
+                onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                className="text-slate-400 hover:text-red-500"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      <div className="relative group">
+        <div className="absolute inset-0 bg-slate-400/10 blur-xl rounded-2xl group-focus-within:bg-slate-900/10 transition-colors" />
+        <div className="relative flex flex-col items-end gap-2 bg-background border border-border rounded-xl p-2 shadow-sm focus-within:ring-2 focus-within:ring-slate-950 focus-within:ring-offset-2 transition-all">
+          <textarea
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={disabled}
+            placeholder="Describe your data or ask for an analysis..."
+            className="w-full bg-transparent border-none focus:ring-0 resize-none px-3 py-2 text-sm max-h-32 min-h-[40px]"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+          />
+          
+          <div className="flex items-center justify-between w-full px-2 pb-1">
+            <div className="flex items-center gap-1">
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
+                multiple 
+              />
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8 text-slate-500 hover:text-slate-900"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || isUploading}
+              >
+                {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+              </Button>
+              <div className="text-[10px] text-slate-400 font-medium ml-2">
+                Markdown supported • Shift+Enter for new line
+              </div>
+            </div>
+            
+            <Button 
+              size="sm" 
+              className="h-8 rounded-lg gap-2 bg-slate-900 hover:bg-slate-800 text-white transition-all active:scale-95"
+              onClick={handleSend}
+              disabled={disabled || (!input.trim() && selectedFiles.length === 0)}
+            >
+              <span className="text-xs font-semibold">Send Message</span>
+              <Send className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -13,11 +13,11 @@ down:
 nuke:
   docker compose down -v --remove-orphans
 
-up-all: up backend-start executor-start frontend-start
+up-all: up backend-start executor-start frontend-start langgraph-start
 
-down-all: frontend-stop executor-stop backend-stop down
+down-all: frontend-stop langgraph-stop executor-stop backend-stop down
 
-nuke-all: frontend-stop executor-stop backend-stop nuke
+nuke-all: frontend-stop langgraph-stop executor-stop backend-stop nuke
 
 install-uv:
   if command -v uv >/dev/null 2>&1; then \
@@ -47,18 +47,10 @@ backend-start:
   fi
 
 backend-stop:
-  if [[ -f .run/backend.pid ]]; then \
-    pid="$$(cat .run/backend.pid)"; \
-    if kill -0 "$$pid" 2>/dev/null; then \
-      kill "$$pid"; \
-      echo "Stopped backend API (pid $$pid)"; \
-    else \
-      echo "Backend API is not running"; \
-    fi; \
-    rm -f .run/backend.pid; \
-  else \
-    echo "Backend API is not running"; \
-  fi
+  @echo "Stopping backend on port ${BACKEND_PORT:-8000}..."
+  @lsof -ti :${BACKEND_PORT:-8000} | xargs kill -9 2>/dev/null || true
+  @rm -f .run/backend.pid
+  @echo "Backend stopped."
 
 logs-backend:
   if [[ -f .run/backend.log ]]; then \
@@ -81,18 +73,26 @@ executor-start:
   fi
 
 executor-stop:
-  if [[ -f .run/executor.pid ]]; then \
-    pid="$$(cat .run/executor.pid)"; \
-    if kill -0 "$$pid" 2>/dev/null; then \
-      kill "$$pid"; \
-      echo "Stopped sandbox executor (pid $$pid)"; \
-    else \
-      echo "Sandbox executor is not running"; \
-    fi; \
-    rm -f .run/executor.pid; \
+  @echo "Stopping executor on port ${EXECUTOR_PORT:-3000}..."
+  @lsof -ti :${EXECUTOR_PORT:-3000} | xargs kill -9 2>/dev/null || true
+  @rm -f .run/executor.pid
+  @echo "Executor stopped."
+
+langgraph-start:
+  mkdir -p .run
+  if [[ -f .run/langgraph.pid ]] && kill -0 "$$(cat .run/langgraph.pid)" 2>/dev/null; then \
+    echo "LangGraph is already running (pid $$(cat .run/langgraph.pid))"; \
   else \
-    echo "Sandbox executor is not running"; \
+    (cd backend && nohup uv run langgraph dev --port 8123 --host 0.0.0.0 > ../.run/langgraph.log 2>&1 & echo $$! > ../.run/langgraph.pid); \
+    echo "Started LangGraph (pid $$(cat .run/langgraph.pid))"; \
+    echo "Logs: .run/langgraph.log"; \
   fi
+
+langgraph-stop:
+  @echo "Stopping LangGraph on port 8123..."
+  @lsof -ti :8123 | xargs kill -9 2>/dev/null || true
+  @rm -f .run/langgraph.pid
+  @echo "LangGraph stopped."
 
 logs-executor:
   if [[ -f .run/executor.log ]]; then \
@@ -121,18 +121,10 @@ frontend-start:
   fi
 
 frontend-stop:
-  if [[ -f .run/frontend.pid ]]; then \
-    pid="$$(cat .run/frontend.pid)"; \
-    if kill -0 "$$pid" 2>/dev/null; then \
-      kill "$$pid"; \
-      echo "Stopped frontend (pid $$pid)"; \
-    else \
-      echo "Frontend is not running"; \
-    fi; \
-    rm -f .run/frontend.pid; \
-  else \
-    echo "Frontend is not running"; \
-  fi
+  @echo "Stopping frontend on port ${FRONTEND_PORT:-3001}..."
+  @lsof -ti :${FRONTEND_PORT:-3001} | xargs kill -9 2>/dev/null || true
+  @rm -f .run/frontend.pid
+  @echo "Frontend stopped."
 
 frontend-preview:
   if [[ -d frontend ]]; then \
@@ -150,9 +142,9 @@ logs-frontend:
 
 setup: backend-setup executor-setup frontend-setup
 
-start: up backend-start executor-start frontend-start
+start: up backend-start executor-start langgraph-start frontend-start
 
-stop: frontend-stop executor-stop backend-stop down
+stop: frontend-stop langgraph-stop executor-stop backend-stop down
 
 restart: stop start
 
@@ -161,6 +153,7 @@ logs:
   [[ -f .run/backend.log ]] && files+=(.run/backend.log); \
   [[ -f .run/executor.log ]] && files+=(.run/executor.log); \
   [[ -f .run/frontend.log ]] && files+=(.run/frontend.log); \
+  [[ -f .run/langgraph.log ]] && files+=(.run/langgraph.log); \
   if (( $${#files[@]} == 0 )); then \
     echo "No log files found under .run/"; \
   else \
@@ -172,7 +165,7 @@ ps:
   docker compose ps; \
   echo; \
   echo "== Processes =="; \
-  for name in backend executor frontend; do \
+  for name in backend executor langgraph frontend; do \
     pidfile=".run/$$name.pid"; \
     if [[ -f "$$pidfile" ]]; then \
       pid="$$(cat "$$pidfile")"; \
@@ -192,6 +185,9 @@ health:
   echo; \
   echo "== Sandbox Executor =="; \
   curl -fsS "http://localhost:${EXECUTOR_PORT:-3000}/v1/health" || true; \
+  echo; \
+  echo "== LangGraph =="; \
+  curl -fsS "http://localhost:8123/ok" || true; \
   echo; \
   echo "== Docker Compose =="; \
   docker compose ps
