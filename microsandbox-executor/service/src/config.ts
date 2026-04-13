@@ -26,7 +26,7 @@ const envSchema = z.object({
   HOST: z.string().min(1).default("0.0.0.0"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"]).default("info"),
-  MICROSANDBOX_IMAGE: z.string().min(1).default("python:3.12"),
+  MICROSANDBOX_IMAGE: z.string().min(1).default("hari31416/sandbox-data-science:py312-v1"),
   MICROSANDBOX_IMAGE_DATA_SCIENCE: z.string().min(1).default("hari31416/sandbox-data-science:py312-v1"),
   SCRATCH_ROOT: z.string().min(1).default("/tmp/agent-sandbox"),
   EXECUTOR_DATABASE_URL: z.string().min(1).default("postgresql://deepagent:deepagent_password@localhost:5432/deepagent"),

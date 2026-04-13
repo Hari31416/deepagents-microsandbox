@@ -22,11 +22,13 @@ class StreamService:
         file_service: FileService,
         settings: Settings,
         transport: httpx.AsyncBaseTransport | None = None,
+        sandbox_backend_factory=MicrosandboxBackend,
     ) -> None:
         self._thread_service = thread_service
         self._file_service = file_service
         self._settings = settings
         self._transport = transport
+        self._sandbox_backend_factory = sandbox_backend_factory
 
     async def stream_chat(
         self,
@@ -39,25 +41,22 @@ class StreamService:
             yield _sse("error", {"detail": "Thread not found"})
             return
 
-        # Stage files in the sandbox before starting the run
-        if selected_file_ids:
-            try:
-                backend = MicrosandboxBackend(
-                    executor_base_url=self._settings.executor_base_url,
-                    thread_id=thread_id,
-                    user_id=owner_id,
-                )
-                files_to_upload = []
-                for file_id in selected_file_ids:
-                    filename, content = self._file_service.get_file_content(thread_id=thread_id, file_id=file_id)
-                    files_to_upload.append((filename, content))
-                
-                if files_to_upload:
-                    # upload_files is synchronous in MicrosandboxBackend
-                    backend.upload_files(files_to_upload)
-            except Exception as e:
-                yield _sse("error", {"detail": f"Failed to stage files in sandbox: {str(e)}"})
-                return
+        try:
+            workspace_files = self._resolve_workspace_files(
+                owner_id=owner_id,
+                thread_id=thread_id,
+                selected_file_ids=selected_file_ids,
+            )
+            self._stage_workspace_files(
+                owner_id=owner_id,
+                thread_id=thread_id,
+                workspace_files=workspace_files,
+            )
+        except Exception as exc:
+            yield _sse("error", {"detail": str(exc)})
+            return
+
+        resolved_file_ids = [str(file["file_id"]) for file in workspace_files]
 
         async with httpx.AsyncClient(
             base_url=self._settings.langgraph_base_url.rstrip("/"),
@@ -81,7 +80,8 @@ class StreamService:
                     owner_id=owner_id,
                     thread_id=thread_id,
                     message=message,
-                    selected_file_ids=selected_file_ids,
+                    selected_file_ids=resolved_file_ids,
+                    workspace_files=workspace_files,
                 ),
             ) as response:
                 if not response.is_success:
@@ -117,13 +117,20 @@ class StreamService:
         thread_id: str,
         message: str,
         selected_file_ids: list[str],
+        workspace_files: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        # Fetch filenames for the selected IDs to provide context to the agent
-        files = self._file_service.list_files_by_ids(thread_id=thread_id, file_ids=selected_file_ids)
-        file_inventory = ", ".join([f"{f['original_filename']} (ID: {f['file_id']})" for f in files])
-        
-        # Prepend the file inventory to the user's message for maximum visibility
-        enriched_message = f"[Workspace Context: The following files are available in your sandbox: {file_inventory}]\n\n{message}"
+        enriched_message = message
+        if workspace_files:
+            file_inventory = "\n".join(
+                f"- {file['original_filename']} (file_id: {file['file_id']})"
+                for file in workspace_files
+            )
+            enriched_message = (
+                "Workspace files currently available in the sandbox:\n"
+                f"{file_inventory}\n\n"
+                "User request:\n"
+                f"{message}"
+            )
 
         return {
             "assistant_id": self._settings.langgraph_assistant_id,
@@ -135,9 +142,66 @@ class StreamService:
                 "user_id": owner_id,
                 "thread_id": thread_id,
                 "selected_file_ids": selected_file_ids,
+                "workspace_files": [str(file["original_filename"]) for file in workspace_files],
             },
             "stream_mode": self._settings.langgraph_stream_mode,
         }
+
+    def _resolve_workspace_files(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        selected_file_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if selected_file_ids:
+            files = self._file_service.list_files_by_ids(thread_id=thread_id, file_ids=selected_file_ids)
+            files_by_id = {str(file["file_id"]): file for file in files}
+            missing_file_ids = [file_id for file_id in selected_file_ids if file_id not in files_by_id]
+            if missing_file_ids:
+                missing = ", ".join(missing_file_ids)
+                raise ValueError(f"Selected files not found in thread: {missing}")
+            ordered_files = [files_by_id[file_id] for file_id in selected_file_ids]
+        else:
+            ordered_files = self._file_service.list_files(owner_id=owner_id, thread_id=thread_id)
+
+        return [
+            file
+            for file in ordered_files
+            if file.get("purpose") == "upload" and file.get("status") == "completed"
+        ]
+
+    def _stage_workspace_files(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        workspace_files: list[dict[str, Any]],
+    ) -> None:
+        if not workspace_files:
+            return
+
+        backend = self._sandbox_backend_factory(
+            executor_base_url=self._settings.executor_base_url,
+            thread_id=thread_id,
+            user_id=owner_id,
+        )
+        files_to_upload: list[tuple[str, bytes]] = []
+
+        for file in workspace_files:
+            filename, content = self._file_service.get_file_content(
+                thread_id=thread_id,
+                file_id=str(file["file_id"]),
+            )
+            files_to_upload.append((filename, content))
+
+        upload_results = backend.upload_files(files_to_upload)
+        failures = [result for result in upload_results if getattr(result, "error", None)]
+        if failures:
+            failure_details = ", ".join(
+                f"{result.path}: {result.error}" for result in failures
+            )
+            raise RuntimeError(f"Failed to stage files in sandbox: {failure_details}")
 
     @staticmethod
     def _request_headers(*, owner_id: str, thread_id: str) -> dict[str, str]:

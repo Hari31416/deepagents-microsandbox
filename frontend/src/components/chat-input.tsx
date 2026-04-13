@@ -1,5 +1,5 @@
-import { useState, useRef } from "react"
-import { Send, Paperclip, X, FileText, Loader2 } from "lucide-react"
+import { useRef, useState } from "react"
+import { Loader2, Paperclip, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useStore } from "@/store/use-store"
 import { filesApi, threadsApi } from "@/lib/api-client"
@@ -11,20 +11,21 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [input, setInput] = useState("")
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { activeThreadId, setThreadFiles } = useStore()
+  const { activeThreadId, setThreadFiles, threadFiles } = useStore()
+  const uploadedFileIds = activeThreadId
+    ? (threadFiles[activeThreadId] || [])
+        .filter((file) => file.purpose === "upload" && file.status === "completed")
+        .map((file) => file.file_id)
+    : []
 
   const handleSend = () => {
-    if (!input.trim() && selectedFiles.length === 0) return
-    
-    // In a real scenario, we might want to ensure uploads are finished
-    // For this simple version, we'll assume fileIds are already managed 
-    // or passed back after upload.
-    onSend(input, []) // Selected file IDs would go here
+    const message = input.trim()
+    if (!message) return
+
+    onSend(message, uploadedFileIds)
     setInput("")
-    setSelectedFiles([])
   }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,23 +76,6 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
 
   return (
     <div className="space-y-4">
-      {selectedFiles.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {selectedFiles.map((file, i) => (
-            <div key={i} className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-xs">
-              <FileText className="h-3 w-3" />
-              <span className="truncate max-w-[100px]">{file.name}</span>
-              <button 
-                onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
-                className="text-slate-400 hover:text-red-500"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      
       <div className="relative group">
         <div className="absolute inset-0 bg-slate-400/10 blur-xl rounded-2xl group-focus-within:bg-slate-900/10 transition-colors" />
         <div className="relative flex flex-col items-end gap-2 bg-background border border-border rounded-xl p-2 shadow-sm focus-within:ring-2 focus-within:ring-slate-950 focus-within:ring-offset-2 transition-all">
@@ -129,6 +113,9 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
                 {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
               </Button>
               <div className="text-[10px] text-slate-400 font-medium ml-2">
+                {uploadedFileIds.length > 0
+                  ? `${uploadedFileIds.length} workspace file${uploadedFileIds.length === 1 ? "" : "s"} available • `
+                  : ""}
                 Markdown supported • Shift+Enter for new line
               </div>
             </div>
@@ -137,7 +124,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
               size="sm" 
               className="h-8 rounded-lg gap-2 bg-slate-900 hover:bg-slate-800 text-white transition-all active:scale-95"
               onClick={handleSend}
-              disabled={disabled || (!input.trim() && selectedFiles.length === 0)}
+              disabled={disabled || !input.trim()}
             >
               <span className="text-xs font-semibold">Send Message</span>
               <Send className="h-3.5 w-3.5" />
