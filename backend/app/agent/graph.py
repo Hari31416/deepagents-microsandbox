@@ -42,7 +42,9 @@ def get_checkpointer():
         return None
 
     settings = get_settings()
-    manager = PostgresSaver.from_conn_string(settings.database_url)
+    # psycopg (used by PostgresSaver) doesn't like the +psycopg suffix used by SQLAlchemy
+    conn_string = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
+    manager = PostgresSaver.from_conn_string(conn_string)
     checkpointer = manager.__enter__()
     checkpointer.setup()
     atexit.register(manager.__exit__, None, None, None)

@@ -83,7 +83,7 @@ langgraph-start:
   if [[ -f .run/langgraph.pid ]] && kill -0 "$$(cat .run/langgraph.pid)" 2>/dev/null; then \
     echo "LangGraph is already running (pid $$(cat .run/langgraph.pid))"; \
   else \
-    (cd backend && nohup uv run langgraph dev --port 8123 --host 0.0.0.0 > ../.run/langgraph.log 2>&1 & echo $$! > ../.run/langgraph.pid); \
+    (cd backend && nohup uv run langgraph dev --port 8123 --host 0.0.0.0 --allow-blocking > ../.run/langgraph.log 2>&1 & echo $$! > ../.run/langgraph.pid); \
     echo "Started LangGraph (pid $$(cat .run/langgraph.pid))"; \
     echo "Logs: .run/langgraph.log"; \
   fi

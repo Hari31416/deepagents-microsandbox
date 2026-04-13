@@ -70,7 +70,38 @@ export function ChatArea() {
         if (event.event === "message" || event.event === "delta") {
           const delta = typeof event.data === "string" ? event.data : event.data?.delta || ""
           fullContent += delta
+        } else if (event.event === "updates") {
+          // LangGraph updates mode: extract new messages
+          const updates = event.data
+          const processNodeData = (nodeData: any) => {
+            if (!nodeData) return
+            const messages = nodeData.messages
+            if (Array.isArray(messages)) {
+              for (const msg of messages) {
+                if ((msg.role === "assistant" || msg.type === "ai") && msg.content) {
+                  fullContent += msg.content
+                }
+              }
+            } else if (messages && typeof messages === "object") {
+              // Single message object
+              if ((messages.role === "assistant" || messages.type === "ai") && messages.content) {
+                fullContent += messages.content
+              }
+            }
+          }
 
+          if (Array.isArray(updates)) {
+            for (const update of updates) {
+              const nodeData = Object.values(update)[0]
+              processNodeData(nodeData)
+            }
+          } else if (typeof updates === "object") {
+            const nodeData = Object.values(updates)[0]
+            processNodeData(nodeData)
+          }
+        }
+
+        if (fullContent) {
           setMessages(prev => ({
             ...prev,
             [activeThreadId]: (prev[activeThreadId] || []).map(m =>
