@@ -1,18 +1,45 @@
-import { useState, useRef, useEffect } from "react"
-import { useStore } from "@/store/use-store"
-import { streamChat } from "@/lib/api-client"
+import { useEffect, useRef, useState } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { ChatInput } from "./chat-input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Bot, User as UserIcon, Loader2, Info, Terminal } from "lucide-react"
-import ReactMarkdown from "react-markdown"
+import { useStore } from "@/store/use-store"
+import { streamChat } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
+import {
+  Bot,
+  CheckCircle2,
+  FileSearch,
+  Info,
+  Loader2,
+  Radio,
+  Terminal,
+  User as UserIcon,
+  Wrench,
+} from "lucide-react"
+import ReactMarkdown from "react-markdown"
+
+interface StreamActivity {
+  id: string
+  label: string
+  detail?: string
+  kind: "metadata" | "tool_call" | "tool_result" | "status" | "error"
+  state: "live" | "done" | "error"
+}
 
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
+  isStreaming?: boolean
+  runId?: string
+  activities?: StreamActivity[]
+}
+
+interface StreamEnvelope {
+  content?: string
+  activities?: StreamActivity[]
+  runId?: string
   isStreaming?: boolean
 }
 
@@ -21,110 +48,132 @@ export function ChatArea() {
   const [messages, setMessages] = useState<Record<string, Message[]>>({})
   const [isStreaming, setIsStreaming] = useState(false)
   const activeMessages = activeThreadId ? messages[activeThreadId] || [] : []
-  const activeThread = threads.find(t => t.thread_id === activeThreadId)
+  const activeThread = threads.find((thread) => thread.thread_id === activeThreadId)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [activeMessages])
 
+  const updateAssistantMessage = (
+    threadId: string,
+    assistantMsgId: string,
+    patch: StreamEnvelope | ((message: Message) => StreamEnvelope),
+  ) => {
+    setMessages((prev) => ({
+      ...prev,
+      [threadId]: (prev[threadId] || []).map((message) => {
+        if (message.id !== assistantMsgId) {
+          return message
+        }
+
+        const nextPatch = typeof patch === "function" ? patch(message) : patch
+        return { ...message, ...nextPatch }
+      }),
+    }))
+  }
+
   const handleSendMessage = async (content: string, fileIds: string[]) => {
     if (!activeThreadId) return
 
+    const threadId = activeThreadId
     const userMsg: Message = {
       id: Math.random().toString(36).substring(7),
       role: "user",
-      content
+      content,
     }
-
-    setMessages(prev => ({
-      ...prev,
-      [activeThreadId]: [...(prev[activeThreadId] || []), userMsg]
-    }))
-
-    setIsStreaming(true)
-
-    // Placeholder for assistant message
     const assistantMsgId = Math.random().toString(36).substring(7)
     const assistantMsg: Message = {
       id: assistantMsgId,
       role: "assistant",
       content: "",
-      isStreaming: true
+      isStreaming: true,
+      activities: [],
     }
 
-    setMessages(prev => ({
+    setMessages((prev) => ({
       ...prev,
-      [activeThreadId]: [...(prev[activeThreadId] || []), assistantMsg]
+      [threadId]: [...(prev[threadId] || []), userMsg, assistantMsg],
     }))
+    setIsStreaming(true)
 
     try {
-      let fullContent = ""
       const stream = streamChat({
-        thread_id: activeThreadId,
+        thread_id: threadId,
         message: content,
-        selected_file_ids: fileIds
+        selected_file_ids: fileIds,
       })
 
       for await (const event of stream) {
-        if (event.event === "message" || event.event === "delta") {
-          const delta = typeof event.data === "string" ? event.data : event.data?.delta || ""
-          fullContent += delta
-        } else if (event.event === "updates") {
-          // LangGraph updates mode: extract new messages
-          const updates = event.data
-          const processNodeData = (nodeData: any) => {
-            if (!nodeData) return
-            const messages = nodeData.messages
-            if (Array.isArray(messages)) {
-              for (const msg of messages) {
-                if ((msg.role === "assistant" || msg.type === "ai") && msg.content) {
-                  fullContent += msg.content
-                }
-              }
-            } else if (messages && typeof messages === "object") {
-              // Single message object
-              if ((messages.role === "assistant" || messages.type === "ai") && messages.content) {
-                fullContent += messages.content
-              }
-            }
-          }
-
-          if (Array.isArray(updates)) {
-            for (const update of updates) {
-              const nodeData = Object.values(update)[0]
-              processNodeData(nodeData)
-            }
-          } else if (typeof updates === "object") {
-            const nodeData = Object.values(updates)[0]
-            processNodeData(nodeData)
-          }
+        if (event.event === "metadata") {
+          const runId = typeof event.data === "object" && event.data ? String(event.data.run_id || "") : ""
+          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+            runId: runId || message.runId,
+            activities: upsertActivity(message.activities, {
+              id: runId || event.id || "run-metadata",
+              kind: "metadata",
+              state: "live",
+              label: "Run started",
+              detail: runId ? `Run ID ${truncateMiddle(runId, 18)}` : "Streaming response connected",
+            }),
+          }))
+          continue
         }
 
-        if (fullContent) {
-          setMessages(prev => ({
-            ...prev,
-            [activeThreadId]: (prev[activeThreadId] || []).map(m =>
-              m.id === assistantMsgId ? { ...m, content: fullContent } : m
-            )
+        if (event.event === "updates") {
+          const streamState = extractStreamState(event.data)
+          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+            content: streamState.content ?? message.content,
+            activities: mergeActivities(message.activities, streamState.activities),
+          }))
+          continue
+        }
+
+        if (event.event === "error") {
+          const detail = extractErrorMessage(event.data, event.rawData)
+          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+            content: message.content ? `${message.content}\n\n${detail}` : detail,
+            isStreaming: false,
+            activities: upsertActivity(message.activities, {
+              id: event.id || "stream-error",
+              kind: "error",
+              state: "error",
+              label: "Run failed",
+              detail,
+            }),
+          }))
+          continue
+        }
+
+        if (event.event === "message" || event.event === "delta") {
+          const delta = typeof event.data === "string" ? event.data : event.data?.delta || event.rawData
+          if (!delta) {
+            continue
+          }
+
+          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+            content: `${message.content}${delta}`,
           }))
         }
       }
 
-      setMessages(prev => ({
-        ...prev,
-        [activeThreadId]: (prev[activeThreadId] || []).map(m =>
-          m.id === assistantMsgId ? { ...m, isStreaming: false } : m
-        )
+      updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+        isStreaming: false,
+        activities: markActivitiesComplete(message.activities),
       }))
-
-    } catch (err) {
-      console.error("Streaming error:", err)
-      setMessages(prev => ({
-        ...prev,
-        [activeThreadId]: (prev[activeThreadId] || []).map(m =>
-          m.id === assistantMsgId ? { ...m, content: (m.content + "\n\n[Error: Connection lost]"), isStreaming: false } : m
-        )
+    } catch (error) {
+      console.error("Streaming error:", error)
+      const detail = error instanceof Error ? error.message : "Connection lost"
+      updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+        content: message.content ? `${message.content}\n\n[Error: ${detail}]` : `[Error: ${detail}]`,
+        isStreaming: false,
+        activities: upsertActivity(message.activities, {
+          id: "stream-connection-error",
+          kind: "error",
+          state: "error",
+          label: "Connection lost",
+          detail,
+        }),
       }))
     } finally {
       setIsStreaming(false)
@@ -148,7 +197,12 @@ export function ChatArea() {
           <h2 className="text-sm font-semibold truncate">{activeThread?.title || "Untitled Conversation"}</h2>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-slate-400">Thread ID: {activeThreadId}</span>
-            <Badge variant="outline" className="text-[9px] h-4 py-0 px-1 font-normal uppercase tracking-wider bg-slate-100/50">Active</Badge>
+            <Badge
+              variant="outline"
+              className="text-[9px] h-4 py-0 px-1 font-normal uppercase tracking-wider bg-slate-100/50"
+            >
+              Active
+            </Badge>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -173,24 +227,40 @@ export function ChatArea() {
               </div>
             </div>
           )}
-          {activeMessages.map((msg) => (
-            <div key={msg.id} className={cn(
-              "flex gap-4",
-              msg.role === "assistant" ? "bg-white/50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800" : ""
-            )}>
-              <div className={cn(
-                "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                msg.role === "assistant" ? "bg-slate-900 text-white" : "bg-white border border-border"
-              )}>
-                {msg.role === "assistant" ? <Bot className="h-5 w-5" /> : <UserIcon className="h-4 w-4" />}
+          {activeMessages.map((message) => (
+            <div
+              key={message.id}
+              className={cn(
+                "flex gap-4",
+                message.role === "assistant"
+                  ? "bg-white/60 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-[0_20px_60px_-45px_rgba(15,23,42,0.7)]"
+                  : "",
+              )}
+            >
+              <div
+                className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                  message.role === "assistant" ? "bg-slate-900 text-white" : "bg-white border border-border",
+                )}
+              >
+                {message.role === "assistant" ? <Bot className="h-5 w-5" /> : <UserIcon className="h-4 w-4" />}
               </div>
-              <div className="flex-1 min-w-0 space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-2">
-                  {msg.role === "assistant" ? "AI Agent" : "You"}
+              <div className="flex-1 min-w-0 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  {message.role === "assistant" ? "AI Agent" : "You"}
                 </div>
+
+                {message.role === "assistant" && (
+                  <LiveTrace
+                    activities={message.activities || []}
+                    runId={message.runId}
+                    isStreaming={Boolean(message.isStreaming)}
+                  />
+                )}
+
                 <div className="prose prose-sm prose-slate dark:prose-invert max-w-none">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  {msg.isStreaming && <Loader2 className="h-4 w-4 animate-spin text-slate-400 mt-2" />}
+                  <ReactMarkdown>{message.content || (message.isStreaming ? "_Thinking..._" : "")}</ReactMarkdown>
+                  {message.isStreaming && <Loader2 className="h-4 w-4 animate-spin text-slate-400 mt-2" />}
                 </div>
               </div>
             </div>
@@ -204,4 +274,279 @@ export function ChatArea() {
       </div>
     </div>
   )
+}
+
+function LiveTrace({
+  activities,
+  runId,
+  isStreaming,
+}: {
+  activities: StreamActivity[]
+  runId?: string
+  isStreaming: boolean
+}) {
+  if (!runId && activities.length === 0 && !isStreaming) {
+    return null
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(135deg,rgba(248,250,252,0.98),rgba(241,245,249,0.84))] px-3 py-3 shadow-[0_20px_40px_-32px_rgba(15,23,42,0.9)]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
+          <Radio className={cn("h-3.5 w-3.5", isStreaming && "animate-pulse text-emerald-600")} />
+          Live Trace
+        </div>
+        {runId ? (
+          <div className="text-[10px] text-slate-500 font-medium">Run {truncateMiddle(runId, 18)}</div>
+        ) : null}
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {activities.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+            Waiting for the first streaming update...
+          </div>
+        ) : (
+          activities.map((activity) => (
+            <div
+              key={activity.id}
+              className={cn(
+                "flex items-start gap-3 rounded-xl border px-3 py-2 transition-colors",
+                activity.state === "error"
+                  ? "border-rose-200 bg-rose-50/80"
+                  : activity.state === "done"
+                    ? "border-emerald-200 bg-emerald-50/70"
+                    : "border-slate-200 bg-white/70",
+              )}
+            >
+              <div className="mt-0.5 shrink-0">{getActivityIcon(activity)}</div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-slate-800">{activity.label}</div>
+                {activity.detail ? (
+                  <div className="mt-1 text-[11px] leading-5 text-slate-500 whitespace-pre-wrap break-words">
+                    {activity.detail}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function getActivityIcon(activity: StreamActivity) {
+  if (activity.state === "error") {
+    return <Info className="h-4 w-4 text-rose-500" />
+  }
+
+  if (activity.kind === "tool_call") {
+    return activity.state === "live" ? (
+      <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+    ) : (
+      <Wrench className="h-4 w-4 text-amber-600" />
+    )
+  }
+
+  if (activity.kind === "tool_result") {
+    return <FileSearch className="h-4 w-4 text-sky-600" />
+  }
+
+  if (activity.kind === "metadata") {
+    return <Radio className="h-4 w-4 text-emerald-600" />
+  }
+
+  if (activity.state === "done") {
+    return <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+  }
+
+  return <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+}
+
+function extractStreamState(payload: unknown): StreamEnvelope {
+  if (!payload || typeof payload !== "object") {
+    return {}
+  }
+
+  let content: string | undefined
+  let activities: StreamActivity[] = []
+
+  for (const [nodeName, nodeData] of Object.entries(payload as Record<string, unknown>)) {
+    if (nodeData === null) {
+      activities = upsertActivity(activities, {
+        id: `${nodeName}-idle`,
+        kind: "status",
+        state: "done",
+        label: formatNodeLabel(nodeName),
+      })
+      continue
+    }
+
+    for (const message of extractNodeMessages(nodeData)) {
+      if ((message.type === "ai" || message.role === "assistant") && typeof message.content === "string" && message.content.trim()) {
+        content = message.content
+        activities = upsertActivity(activities, {
+          id: message.id || `${nodeName}-assistant`,
+          kind: "status",
+          state: "done",
+          label: "Draft response updated",
+          detail: previewText(message.content),
+        })
+      }
+
+      if ((message.type === "ai" || message.role === "assistant") && Array.isArray(message.tool_calls)) {
+        for (const toolCall of message.tool_calls) {
+          activities = upsertActivity(activities, {
+            id: toolCall.id || `${nodeName}-${toolCall.name}`,
+            kind: "tool_call",
+            state: "live",
+            label: `Running ${toolCall.name}`,
+            detail: summarizeArgs(toolCall.args),
+          })
+        }
+      }
+
+      if (message.type === "tool") {
+        activities = upsertActivity(activities, {
+          id: message.tool_call_id || message.id || `${nodeName}-${message.name}`,
+          kind: "tool_result",
+          state: message.status === "success" ? "done" : "error",
+          label: `${message.name} ${message.status === "success" ? "finished" : "returned an error"}`,
+          detail: previewText(typeof message.content === "string" ? message.content : JSON.stringify(message.content)),
+        })
+      }
+    }
+  }
+
+  return { content, activities }
+}
+
+function extractNodeMessages(nodeData: unknown): Array<Record<string, any>> {
+  if (!nodeData || typeof nodeData !== "object") {
+    return []
+  }
+
+  const record = nodeData as Record<string, unknown>
+  const messages = "messages" in record ? record.messages : record.value
+
+  if (Array.isArray(messages)) {
+    return messages.filter((message): message is Record<string, any> => Boolean(message) && typeof message === "object")
+  }
+
+  if (messages && typeof messages === "object") {
+    const nestedMessages = messages as Record<string, unknown>
+
+    if (Array.isArray(nestedMessages.value)) {
+      return nestedMessages.value.filter(
+        (message): message is Record<string, any> => Boolean(message) && typeof message === "object",
+      )
+    }
+
+    if (nestedMessages.value && typeof nestedMessages.value === "object") {
+      return [nestedMessages.value as Record<string, any>]
+    }
+  }
+
+  if (messages && typeof messages === "object") {
+    return [messages as Record<string, any>]
+  }
+
+  if ("value" in record && Array.isArray(record.value)) {
+    return record.value.filter((message): message is Record<string, any> => Boolean(message) && typeof message === "object")
+  }
+
+  return []
+}
+
+function mergeActivities(
+  existing: StreamActivity[] | undefined,
+  incoming: StreamActivity[] | undefined,
+): StreamActivity[] {
+  let next = [...(existing || [])]
+
+  for (const activity of incoming || []) {
+    next = upsertActivity(next, activity)
+  }
+
+  return next
+}
+
+function upsertActivity(
+  activities: StreamActivity[] | undefined,
+  incoming: StreamActivity,
+): StreamActivity[] {
+  const next = [...(activities || [])]
+  const index = next.findIndex((activity) => activity.id === incoming.id)
+
+  if (index >= 0) {
+    next[index] = { ...next[index], ...incoming }
+    return next
+  }
+
+  return [...next, incoming]
+}
+
+function markActivitiesComplete(activities: StreamActivity[] | undefined): StreamActivity[] {
+  return (activities || []).map((activity) =>
+    activity.state === "live" ? { ...activity, state: "done" } : activity,
+  )
+}
+
+function summarizeArgs(args: unknown) {
+  if (!args) {
+    return "No arguments"
+  }
+
+  if (typeof args === "string") {
+    return previewText(args)
+  }
+
+  try {
+    return previewText(JSON.stringify(args))
+  } catch {
+    return "Arguments unavailable"
+  }
+}
+
+function previewText(value: string, limit = 160) {
+  const normalized = value.replace(/\s+/g, " ").trim()
+  if (normalized.length <= limit) {
+    return normalized
+  }
+  return `${normalized.slice(0, limit - 1)}…`
+}
+
+function formatNodeLabel(nodeName: string) {
+  return nodeName
+    .split(".")
+    .pop()
+    ?.replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/^\w/, (char) => char.toUpperCase()) || nodeName
+}
+
+function truncateMiddle(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value
+  }
+
+  const headLength = Math.ceil((maxLength - 1) / 2)
+  const tailLength = Math.floor((maxLength - 1) / 2)
+  return `${value.slice(0, headLength)}…${value.slice(-tailLength)}`
+}
+
+function extractErrorMessage(data: unknown, rawData: string) {
+  if (typeof data === "string" && data.trim()) {
+    return data
+  }
+
+  if (data && typeof data === "object" && "detail" in data) {
+    const detail = (data as { detail?: unknown }).detail
+    if (typeof detail === "string" && detail.trim()) {
+      return detail
+    }
+  }
+
+  return rawData || "Stream failed"
 }

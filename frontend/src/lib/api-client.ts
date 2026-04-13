@@ -85,7 +85,9 @@ export const filesApi = {
 // SSE Parser
 export interface SseEvent {
   event: string
+  id?: string
   data: any
+  rawData: string
 }
 
 export async function* streamChat(params: {
@@ -110,38 +112,86 @@ export async function* streamChat(params: {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ""
+  let currentEventName = "message"
+  let currentEventId: string | undefined
+  let currentDataLines: string[] = []
+
+  const flushEvent = (): SseEvent | null => {
+    if (!currentDataLines.length && !currentEventId && currentEventName === "message") {
+      return null
+    }
+
+    const rawData = currentDataLines.join("\n")
+    let parsedData: unknown = rawData
+
+    if (rawData) {
+      try {
+        parsedData = JSON.parse(rawData)
+      } catch {
+        parsedData = rawData
+      }
+    }
+
+    const event: SseEvent = {
+      event: currentEventName || "message",
+      id: currentEventId,
+      data: parsedData,
+      rawData,
+    }
+
+    currentEventName = "message"
+    currentEventId = undefined
+    currentDataLines = []
+
+    return event
+  }
 
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
+    const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() || ""
 
-    let currentEvent: Partial<SseEvent> = {}
-
     for (const line of lines) {
-      if (!line.trim()) {
-        if (currentEvent.event && currentEvent.data) {
-          yield currentEvent as SseEvent
-          currentEvent = {}
+      if (!line) {
+        const event = flushEvent()
+        if (event) {
+          yield event
         }
         continue
       }
 
-      const [key, ...rest] = line.split(":")
-      const val = rest.join(":").trim()
+      if (line.startsWith(":")) {
+        continue
+      }
+
+      const separatorIndex = line.indexOf(":")
+      const key = separatorIndex === -1 ? line : line.slice(0, separatorIndex)
+      const rawValue = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1)
+      const valueText = rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue
 
       if (key === "event") {
-        currentEvent.event = val
+        currentEventName = valueText || "message"
+      } else if (key === "id") {
+        currentEventId = valueText
       } else if (key === "data") {
-        try {
-          currentEvent.data = JSON.parse(val)
-        } catch {
-          currentEvent.data = val
-        }
+        currentDataLines.push(valueText)
       }
     }
+  }
+
+  if (buffer) {
+    const trailingLine = buffer.replace(/\r$/, "")
+    if (trailingLine.startsWith("data:")) {
+      const rawValue = trailingLine.slice(5)
+      currentDataLines.push(rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue)
+    }
+  }
+
+  const trailingEvent = flushEvent()
+  if (trailingEvent) {
+    yield trailingEvent
   }
 }
