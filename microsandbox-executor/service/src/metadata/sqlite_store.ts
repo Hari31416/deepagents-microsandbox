@@ -3,29 +3,7 @@ import Database from "better-sqlite3";
 
 import { ensureDir } from "../util/fs.js";
 import type { ExecutionRequest, JobRecord } from "../jobs/models.js";
-
-export interface SessionRecord {
-  sessionId: string;
-  createdAt: string;
-  lastAccessedAt: string;
-  expiresAt: string;
-  activeJobCount: number;
-  deleting: boolean;
-}
-
-export interface SessionFileRecord {
-  sessionId: string;
-  path: string;
-  size: number;
-  contentType: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface MetadataHealth {
-  ok: boolean;
-  details: string;
-}
+import type { MetadataHealth, MetadataStore, SessionFileRecord, SessionRecord } from "./types.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -35,7 +13,7 @@ function expiresAtIso(ttlSeconds: number) {
   return new Date(Date.now() + ttlSeconds * 1000).toISOString();
 }
 
-export class MetadataStore {
+export class SqliteMetadataStore implements MetadataStore {
   private readonly db: InstanceType<typeof Database>;
 
   constructor(private readonly dbPath: string, private readonly sessionTtlSeconds: number) {
@@ -47,7 +25,7 @@ export class MetadataStore {
 
   static async create(dbPath: string, sessionTtlSeconds: number) {
     await ensureDir(dirname(dbPath));
-    return new MetadataStore(dbPath, sessionTtlSeconds);
+    return new SqliteMetadataStore(dbPath, sessionTtlSeconds);
   }
 
   close() {
@@ -72,7 +50,6 @@ export class MetadataStore {
   createSession(sessionId: string) {
     const createdAt = nowIso();
     const expiresAt = expiresAtIso(this.sessionTtlSeconds);
-
     this.db
       .prepare(
         `INSERT INTO sessions (
@@ -85,49 +62,36 @@ export class MetadataStore {
         ) VALUES (?, ?, ?, ?, 0, 0)`
       )
       .run(sessionId, createdAt, createdAt, expiresAt);
-
     return this.getRequiredSession(sessionId);
   }
 
   getSession(sessionId: string) {
     const row = this.db
       .prepare(
-        `SELECT
-          session_id,
-          created_at,
-          last_accessed_at,
-          expires_at,
-          active_job_count,
-          deleting
-        FROM sessions
-        WHERE session_id = ?`
+        `SELECT session_id, created_at, last_accessed_at, expires_at, active_job_count, deleting
+         FROM sessions WHERE session_id = ?`
       )
       .get(sessionId) as Record<string, unknown> | undefined;
-
     return row ? mapSession(row) : null;
   }
 
   getRequiredSession(sessionId: string) {
     const session = this.getSession(sessionId);
-
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-
     return session;
   }
 
   touchSession(sessionId: string) {
     const touchedAt = nowIso();
-
     const result = this.db
       .prepare(
         `UPDATE sessions
-        SET last_accessed_at = ?, expires_at = ?
-        WHERE session_id = ?`
+         SET last_accessed_at = ?, expires_at = ?
+         WHERE session_id = ?`
       )
       .run(touchedAt, expiresAtIso(this.sessionTtlSeconds), sessionId);
-
     if (result.changes === 0) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
@@ -135,13 +99,7 @@ export class MetadataStore {
 
   incrementActiveJobCount(sessionId: string) {
     this.touchSession(sessionId);
-    this.db
-      .prepare(
-        `UPDATE sessions
-        SET active_job_count = active_job_count + 1
-        WHERE session_id = ?`
-      )
-      .run(sessionId);
+    this.db.prepare(`UPDATE sessions SET active_job_count = active_job_count + 1 WHERE session_id = ?`).run(sessionId);
   }
 
   decrementActiveJobCount(sessionId: string) {
@@ -149,8 +107,8 @@ export class MetadataStore {
     this.db
       .prepare(
         `UPDATE sessions
-        SET active_job_count = CASE WHEN active_job_count > 0 THEN active_job_count - 1 ELSE 0 END
-        WHERE session_id = ?`
+         SET active_job_count = CASE WHEN active_job_count > 0 THEN active_job_count - 1 ELSE 0 END
+         WHERE session_id = ?`
       )
       .run(sessionId);
   }
@@ -159,24 +117,17 @@ export class MetadataStore {
     const result = this.db
       .prepare(
         `UPDATE sessions
-        SET deleting = 1
-        WHERE session_id = ?
-          AND active_job_count = 0
-          AND deleting = 0`
+         SET deleting = 1
+         WHERE session_id = ?
+           AND active_job_count = 0
+           AND deleting = 0`
       )
       .run(sessionId);
-
     return result.changes > 0;
   }
 
   clearSessionDeleting(sessionId: string) {
-    this.db
-      .prepare(
-        `UPDATE sessions
-        SET deleting = 0
-        WHERE session_id = ?`
-      )
-      .run(sessionId);
+    this.db.prepare(`UPDATE sessions SET deleting = 0 WHERE session_id = ?`).run(sessionId);
   }
 
   deleteSession(sessionId: string) {
@@ -185,16 +136,10 @@ export class MetadataStore {
 
   upsertFile(sessionId: string, path: string, size: number, contentType: string | null) {
     const timestamp = nowIso();
-
     this.db
       .prepare(
         `INSERT INTO session_files (
-          session_id,
-          path,
-          size,
-          content_type,
-          created_at,
-          updated_at
+          session_id, path, size, content_type, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, path) DO UPDATE SET
           size = excluded.size,
@@ -207,37 +152,21 @@ export class MetadataStore {
   listFiles(sessionId: string): SessionFileRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT
-          session_id,
-          path,
-          size,
-          content_type,
-          created_at,
-          updated_at
-        FROM session_files
-        WHERE session_id = ?
-        ORDER BY path ASC`
+        `SELECT session_id, path, size, content_type, created_at, updated_at
+         FROM session_files WHERE session_id = ? ORDER BY path ASC`
       )
       .all(sessionId) as Array<Record<string, unknown>>;
-
     return rows.map(mapSessionFile);
   }
 
   getFile(sessionId: string, path: string) {
     const row = this.db
       .prepare(
-        `SELECT
-          session_id,
-          path,
-          size,
-          content_type,
-          created_at,
-          updated_at
-        FROM session_files
-        WHERE session_id = ? AND path = ?`
+        `SELECT session_id, path, size, content_type, created_at, updated_at
+         FROM session_files
+         WHERE session_id = ? AND path = ?`
       )
       .get(sessionId, path) as Record<string, unknown> | undefined;
-
     return row ? mapSessionFile(row) : null;
   }
 
@@ -245,44 +174,24 @@ export class MetadataStore {
     if (this.getJob(jobId)) {
       throw new Error(`Job already exists: ${jobId}`);
     }
-
     const createdAt = nowIso();
     this.db
       .prepare(
         `INSERT INTO jobs (
-          job_id,
-          session_id,
-          status,
-          exit_code,
-          stdout,
-          stderr,
-          duration_ms,
-          files_uploaded_json,
-          created_at,
-          started_at,
-          completed_at,
-          request_json
+          job_id, session_id, status, exit_code, stdout, stderr, duration_ms, files_uploaded_json,
+          created_at, started_at, completed_at, request_json
         ) VALUES (?, ?, 'queued', NULL, '', '', NULL, '[]', ?, NULL, NULL, ?)`
       )
       .run(jobId, request.sessionId, createdAt, JSON.stringify(request));
-
     return this.getRequiredJob(jobId);
   }
 
   markJobRunning(jobId: string) {
     const startedAt = nowIso();
-    const result = this.db
-      .prepare(
-        `UPDATE jobs
-        SET status = 'running', started_at = ?
-        WHERE job_id = ?`
-      )
-      .run(startedAt, jobId);
-
+    const result = this.db.prepare(`UPDATE jobs SET status = 'running', started_at = ? WHERE job_id = ?`).run(startedAt, jobId);
     if (result.changes === 0) {
       throw new Error(`Unknown job: ${jobId}`);
     }
-
     return this.getRequiredJob(jobId);
   }
 
@@ -291,53 +200,36 @@ export class MetadataStore {
     const update = this.db
       .prepare(
         `UPDATE jobs
-        SET
-          status = 'completed',
-          exit_code = ?,
-          stdout = ?,
-          stderr = ?,
-          duration_ms = ?,
-          files_uploaded_json = ?,
-          completed_at = ?
-        WHERE job_id = ?`
+         SET status = 'completed',
+             exit_code = ?,
+             stdout = ?,
+             stderr = ?,
+             duration_ms = ?,
+             files_uploaded_json = ?,
+             completed_at = ?
+         WHERE job_id = ?`
       )
-      .run(
-        result.exitCode,
-        result.stdout,
-        result.stderr,
-        result.durationMs,
-        JSON.stringify(result.filesUploaded),
-        completedAt,
-        jobId
-      );
-
+      .run(result.exitCode, result.stdout, result.stderr, result.durationMs, JSON.stringify(result.filesUploaded), completedAt, jobId);
     if (update.changes === 0) {
       throw new Error(`Unknown job: ${jobId}`);
     }
-
     return this.getRequiredJob(jobId);
   }
 
-  failJob(
-    jobId: string,
-    error: unknown,
-    result?: Partial<Pick<JobRecord, "exitCode" | "stdout" | "stderr" | "durationMs" | "filesUploaded">>
-  ) {
+  failJob(jobId: string, error: unknown, result?: Partial<Pick<JobRecord, "exitCode" | "stdout" | "stderr" | "durationMs" | "filesUploaded">>) {
     const current = this.getRequiredJob(jobId);
     const completedAt = nowIso();
-
     const update = this.db
       .prepare(
         `UPDATE jobs
-        SET
-          status = 'failed',
-          exit_code = ?,
-          stdout = ?,
-          stderr = ?,
-          duration_ms = ?,
-          files_uploaded_json = ?,
-          completed_at = ?
-        WHERE job_id = ?`
+         SET status = 'failed',
+             exit_code = ?,
+             stdout = ?,
+             stderr = ?,
+             duration_ms = ?,
+             files_uploaded_json = ?,
+             completed_at = ?
+         WHERE job_id = ?`
       )
       .run(
         result?.exitCode ?? current.exitCode,
@@ -348,45 +240,28 @@ export class MetadataStore {
         completedAt,
         jobId
       );
-
     if (update.changes === 0) {
       throw new Error(`Unknown job: ${jobId}`);
     }
-
     return this.getRequiredJob(jobId);
   }
 
   getJob(jobId: string) {
     const row = this.db
       .prepare(
-        `SELECT
-          job_id,
-          session_id,
-          status,
-          exit_code,
-          stdout,
-          stderr,
-          duration_ms,
-          files_uploaded_json,
-          created_at,
-          started_at,
-          completed_at,
-          request_json
-        FROM jobs
-        WHERE job_id = ?`
+        `SELECT job_id, session_id, status, exit_code, stdout, stderr, duration_ms,
+                files_uploaded_json, created_at, started_at, completed_at, request_json
+         FROM jobs WHERE job_id = ?`
       )
       .get(jobId) as Record<string, unknown> | undefined;
-
     return row ? mapJob(row) : null;
   }
 
   getRequiredJob(jobId: string) {
     const job = this.getJob(jobId);
-
     if (!job) {
       throw new Error(`Unknown job: ${jobId}`);
     }
-
     return job;
   }
 
@@ -394,14 +269,13 @@ export class MetadataStore {
     const rows = this.db
       .prepare(
         `SELECT session_id
-        FROM sessions
-        WHERE expires_at <= ?
-          AND active_job_count = 0
-          AND deleting = 0
-        ORDER BY expires_at ASC`
+         FROM sessions
+         WHERE expires_at <= ?
+           AND active_job_count = 0
+           AND deleting = 0
+         ORDER BY expires_at ASC`
       )
       .all(referenceIso) as Array<{ session_id: string }>;
-
     return rows.map((row) => row.session_id);
   }
 
@@ -448,14 +322,13 @@ export class MetadataStore {
     this.db
       .prepare(
         `UPDATE jobs
-        SET
-          status = 'failed',
-          stderr = CASE
-            WHEN stderr = '' THEN 'Service restarted before job completion'
-            ELSE stderr || '\nService restarted before job completion'
-          END,
-          completed_at = COALESCE(completed_at, ?)
-        WHERE status IN ('queued', 'running')`
+         SET status = 'failed',
+             stderr = CASE
+               WHEN stderr = '' THEN 'Service restarted before job completion'
+               ELSE stderr || '\nService restarted before job completion'
+             END,
+             completed_at = COALESCE(completed_at, ?)
+         WHERE status IN ('queued', 'running')`
       )
       .run(restartedAt);
     this.db.exec("UPDATE sessions SET active_job_count = 0, deleting = 0");

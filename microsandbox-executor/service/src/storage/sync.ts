@@ -2,10 +2,10 @@ import { symlink } from "node:fs/promises";
 import { posix } from "node:path";
 
 import { normalizeRelativePath, pathExists, resolveWithin } from "../util/fs.js";
-import { LocalSessionStorage } from "./local.js";
+import type { SessionStorage } from "./types.js";
 
 export class WorkspaceSync {
-  constructor(private readonly storage: LocalSessionStorage) {}
+  constructor(private readonly storage: SessionStorage) {}
 
   async stageFiles(sessionId: string, filePaths: string[], workspacePath: string) {
     const stagedFiles = await this.storage.stageFiles(sessionId, filePaths, workspacePath);

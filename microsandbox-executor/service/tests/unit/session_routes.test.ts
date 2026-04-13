@@ -8,7 +8,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { buildApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
 import { JobExecutor } from "../../src/jobs/executor.js";
-import { MetadataStore } from "../../src/metadata/store.js";
+import { SqliteMetadataStore } from "../../src/metadata/sqlite_store.js";
 import { SessionCleanupService } from "../../src/sessions/cleanup.js";
 import { SessionLockManager } from "../../src/sessions/locks.js";
 import { LocalSessionStorage } from "../../src/storage/local.js";
@@ -55,13 +55,12 @@ class FakeRuntime implements SandboxRuntime {
 test("session routes support upload, full-session execute, listing, download, and delete", async () => {
   const root = await mkdtemp(join(tmpdir(), "session-routes-"));
   const config = loadConfig({
-    SESSION_STORAGE_ROOT: join(root, "sessions"),
-    SQLITE_DB_PATH: join(root, "metadata.sqlite"),
+    EXECUTOR_DATABASE_URL: "postgresql://unused:unused@localhost:5432/unused",
     SCRATCH_ROOT: join(root, "scratch")
   });
   const runtime = new FakeRuntime();
-  const storage = new LocalSessionStorage(config.sessionStorageRoot);
-  const metadata = await MetadataStore.create(config.sqliteDbPath, config.sessionTtlSeconds);
+  const storage = new LocalSessionStorage(join(root, "sessions"));
+  const metadata = await SqliteMetadataStore.create(join(root, "metadata.sqlite"), config.sessionTtlSeconds);
   const locks = new SessionLockManager();
   const sync = new WorkspaceSync(storage);
   const cleanup = new SessionCleanupService(config, storage, metadata, locks);

@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { prepareBashExecution, preparePythonExecution } from "../policy/restricted_exec.js";
 import type { SandboxRuntime } from "../runtime/types.js";
 import { createJobWorkspace, cleanupJobWorkspace } from "../storage/workspace.js";
-import { MetadataStore } from "../metadata/store.js";
+import type { MetadataStore } from "../metadata/types.js";
 import { SessionLockManager } from "../sessions/locks.js";
 import { createSandboxName, createJobId } from "../util/ids.js";
 import { resolveWithin } from "../util/fs.js";
@@ -50,7 +50,7 @@ export class JobExecutor {
     });
   }
 
-  get(jobId: string): JobRecord | null {
+  async get(jobId: string): Promise<JobRecord | null> {
     return this.metadata.getJob(jobId);
   }
 
@@ -97,17 +97,17 @@ export class JobExecutor {
     });
 
     return this.locks.runExclusive(request.sessionId, async () => {
-      this.metadata.getRequiredSession(request.sessionId);
-      this.metadata.createJob(jobId, {
+      await this.metadata.getRequiredSession(request.sessionId);
+      await this.metadata.createJob(jobId, {
         ...request,
         jobId
       });
-      this.metadata.markJobRunning(jobId);
-      this.metadata.incrementActiveJobCount(request.sessionId);
+      await this.metadata.markJobRunning(jobId);
+      await this.metadata.incrementActiveJobCount(request.sessionId);
       const workspace = await createJobWorkspace(this.config.scratchRoot, request.sessionId, jobId);
 
       try {
-        const stagedPaths = request.filePaths ?? this.metadata.listFiles(request.sessionId).map((file) => file.path);
+        const stagedPaths = request.filePaths ?? (await this.metadata.listFiles(request.sessionId)).map((file) => file.path);
         console.info("[executor] staging workspace files", {
           timestamp: new Date().toISOString(),
           jobId,
@@ -150,9 +150,9 @@ export class JobExecutor {
 
         for (const relativePath of uploadedFiles) {
           const persistedFile = await stat(resolveWithin(workspace.workspacePath, relativePath));
-          this.metadata.upsertFile(request.sessionId, relativePath, persistedFile.size, null);
+          await this.metadata.upsertFile(request.sessionId, relativePath, persistedFile.size, null);
         }
-        this.metadata.touchSession(request.sessionId);
+        await this.metadata.touchSession(request.sessionId);
 
         console.info("[executor] completed job", {
           timestamp: new Date().toISOString(),
@@ -177,7 +177,7 @@ export class JobExecutor {
         });
         return this.metadata.failJob(jobId, error);
       } finally {
-        this.metadata.decrementActiveJobCount(request.sessionId);
+        await this.metadata.decrementActiveJobCount(request.sessionId);
         console.info("[executor] cleaning workspace", {
           timestamp: new Date().toISOString(),
           jobId,

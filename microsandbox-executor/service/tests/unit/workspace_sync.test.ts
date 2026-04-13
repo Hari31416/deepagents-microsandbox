@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
 
 import { WorkspaceSync } from "../../src/storage/sync.js";
-import { LocalSessionStorage } from "../../src/storage/local.js";
+import type { SessionStorage } from "../../src/storage/types.js";
 
 class FakeStorage {
   persistedFiles: string[] = [];
@@ -29,7 +29,7 @@ class FakeStorage {
 
 test("WorkspaceSync stages unique top-level aliases for nested files", async () => {
   const workspacePath = await mkdtemp(join(tmpdir(), "workspace-sync-"));
-  const sync = new WorkspaceSync(new FakeStorage() as unknown as LocalSessionStorage);
+  const sync = new WorkspaceSync(new FakeStorage() as unknown as SessionStorage);
 
   await sync.stageFiles("sess-1", ["demo/sess-1/inputs/titanic.csv"], workspacePath);
 
@@ -41,7 +41,7 @@ test("WorkspaceSync stages unique top-level aliases for nested files", async () 
 
 test("WorkspaceSync skips aliases when nested files share the same basename", async () => {
   const workspacePath = await mkdtemp(join(tmpdir(), "workspace-sync-"));
-  const sync = new WorkspaceSync(new FakeStorage() as unknown as LocalSessionStorage);
+  const sync = new WorkspaceSync(new FakeStorage() as unknown as SessionStorage);
 
   await sync.stageFiles(
     "sess-1",
@@ -55,7 +55,7 @@ test("WorkspaceSync skips aliases when nested files share the same basename", as
 test("WorkspaceSync persists normalized changed files", async () => {
   const workspacePath = await mkdtemp(join(tmpdir(), "workspace-sync-"));
   const storage = new FakeStorage();
-  const sync = new WorkspaceSync(storage as unknown as LocalSessionStorage);
+  const sync = new WorkspaceSync(storage as unknown as SessionStorage);
 
   await sync.persistFiles(workspacePath, "demo-sess-1", ["titanic_cleaned.csv", "reports/daily.csv"]);
 
@@ -65,7 +65,7 @@ test("WorkspaceSync persists normalized changed files", async () => {
 test("WorkspaceSync deduplicates persisted file paths", async () => {
   const workspacePath = await mkdtemp(join(tmpdir(), "workspace-sync-"));
   const storage = new FakeStorage();
-  const sync = new WorkspaceSync(storage as unknown as LocalSessionStorage);
+  const sync = new WorkspaceSync(storage as unknown as SessionStorage);
 
   await sync.persistFiles(workspacePath, "demo-sess-1", ["result.txt", "result.txt"]);
 

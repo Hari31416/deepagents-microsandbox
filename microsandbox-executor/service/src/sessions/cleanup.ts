@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config.js";
-import { MetadataStore } from "../metadata/store.js";
-import { LocalSessionStorage } from "../storage/local.js";
+import type { MetadataStore } from "../metadata/types.js";
+import type { SessionStorage } from "../storage/types.js";
 import { SessionLockManager } from "./locks.js";
 
 export class SessionCleanupService {
@@ -8,7 +8,7 @@ export class SessionCleanupService {
 
   constructor(
     private readonly config: AppConfig,
-    private readonly storage: LocalSessionStorage,
+    private readonly storage: SessionStorage,
     private readonly metadata: MetadataStore,
     private readonly locks: SessionLockManager
   ) {}
@@ -29,19 +29,19 @@ export class SessionCleanupService {
   }
 
   async runOnce() {
-    const expiredSessionIds = this.metadata.listExpiredSessionIds();
+    const expiredSessionIds = await this.metadata.listExpiredSessionIds();
 
     for (const sessionId of expiredSessionIds) {
       await this.locks.runExclusive(sessionId, async () => {
-        if (!this.metadata.markSessionDeleting(sessionId)) {
+        if (!(await this.metadata.markSessionDeleting(sessionId))) {
           return;
         }
 
         try {
           await this.storage.deleteSession(sessionId);
-          this.metadata.deleteSession(sessionId);
+          await this.metadata.deleteSession(sessionId);
         } catch (error) {
-          this.metadata.clearSessionDeleting(sessionId);
+          await this.metadata.clearSessionDeleting(sessionId);
           throw error;
         }
       });

@@ -1,11 +1,10 @@
 import multipart from "@fastify/multipart";
 import type { FastifyInstance } from "fastify";
 import { basename } from "node:path";
-import { stat } from "node:fs/promises";
 import { ZodError, z } from "zod";
 
 import type { AppServices } from "../app.js";
-import { normalizeRelativePath, resolveWithin, writeStreamToFile } from "../util/fs.js";
+import { normalizeRelativePath } from "../util/fs.js";
 import { createSessionId, sanitizeUploadedFilename, validateSessionId } from "../util/ids.js";
 
 const createSessionSchema = z
@@ -28,7 +27,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
       const payload = createSessionSchema.parse(request.body ?? {});
       const sessionId = payload?.session_id ?? createSessionId();
       validateSessionId(sessionId);
-      const session = services.metadata.createSession(sessionId);
+      const session = await services.metadata.createSession(sessionId);
       await services.storage.ensureSessionRoot(sessionId);
 
       return reply.code(201).send({
@@ -65,7 +64,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
     try {
       validateSessionId(sessionId);
       const payload = await services.locks.runExclusive(sessionId, async () => {
-        services.metadata.getRequiredSession(sessionId);
+        await services.metadata.getRequiredSession(sessionId);
         await services.storage.ensureSessionRoot(sessionId);
 
         const parts = request.parts();
@@ -77,16 +76,14 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
           }
 
           const relativePath = normalizeRelativePath(sanitizeUploadedFilename(part.filename ?? "upload.bin"));
-          const destinationPath = resolveWithin(services.storage.resolveSessionRoot(sessionId), relativePath);
-
-          await writeStreamToFile(part.file, destinationPath);
-          const stats = await stat(destinationPath);
-          services.metadata.upsertFile(sessionId, relativePath, stats.size, part.mimetype ?? null);
+          const contents = await part.toBuffer();
+          await services.storage.saveUpload(sessionId, relativePath, contents, part.mimetype ?? null);
+          await services.metadata.upsertFile(sessionId, relativePath, contents.length, part.mimetype ?? null);
           uploadedFiles.push({
             path: relativePath,
-            size: stats.size,
+            size: contents.length,
             content_type: part.mimetype ?? null,
-            updated_at: new Date(stats.mtimeMs).toISOString()
+            updated_at: new Date().toISOString()
           });
         }
 
@@ -94,7 +91,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
           throw new Error("At least one file is required");
         }
 
-        services.metadata.touchSession(sessionId);
+        await services.metadata.touchSession(sessionId);
 
         return {
           session_id: sessionId,
@@ -123,8 +120,8 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
     try {
       validateSessionId(sessionId);
       const files = await services.locks.runExclusive(sessionId, async () => {
-        services.metadata.getRequiredSession(sessionId);
-        services.metadata.touchSession(sessionId);
+        await services.metadata.getRequiredSession(sessionId);
+        await services.metadata.touchSession(sessionId);
         return services.metadata.listFiles(sessionId);
       });
 
@@ -157,9 +154,9 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
       validateSessionId(sessionId);
       const relativePath = normalizeRelativePath(params["*"]);
       const file = await services.locks.runExclusive(sessionId, async () => {
-        services.metadata.getRequiredSession(sessionId);
-        services.metadata.touchSession(sessionId);
-        const metadata = services.metadata.getFile(sessionId, relativePath);
+        await services.metadata.getRequiredSession(sessionId);
+        await services.metadata.touchSession(sessionId);
+        const metadata = await services.metadata.getFile(sessionId, relativePath);
 
         if (!metadata) {
           throw new Error("File not found");
@@ -195,18 +192,18 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
     try {
       validateSessionId(sessionId);
       await services.locks.runExclusive(sessionId, async () => {
-        const session = services.metadata.getRequiredSession(sessionId);
+        const session = await services.metadata.getRequiredSession(sessionId);
 
         if (session.activeJobCount > 0) {
           throw new Error("Session has active jobs");
         }
 
-        if (!services.metadata.markSessionDeleting(sessionId)) {
+        if (!(await services.metadata.markSessionDeleting(sessionId))) {
           throw new Error("Session cannot be deleted right now");
         }
 
         await services.storage.deleteSession(sessionId);
-        services.metadata.deleteSession(sessionId);
+        await services.metadata.deleteSession(sessionId);
       });
 
       return reply.code(204).send();

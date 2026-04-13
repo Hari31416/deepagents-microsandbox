@@ -18,10 +18,13 @@
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "microsandbox": "file:./vendor/microsandbox-0.3.12.tgz",
+    "minio": "^8.0.6",
+    "pg": "^8.13.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.6",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }

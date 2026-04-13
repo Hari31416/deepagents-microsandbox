@@ -1,23 +1,14 @@
 import { access, createReadStream } from "node:fs";
-import { copyFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import { ensureDir, pathExists, removeDirIfExists, resolveWithin, statWithin } from "../util/fs.js";
+import type { DownloadHandle, SessionStorage, StorageHealth } from "./types.js";
 
 const accessAsync = promisify(access);
 
-export interface StorageHealth {
-  ok: boolean;
-  details: string;
-}
-
-export interface DownloadHandle {
-  stream: NodeJS.ReadableStream;
-  size: number;
-}
-
-export class LocalSessionStorage {
+export class LocalSessionStorage implements SessionStorage {
   constructor(private readonly rootPath: string) {}
 
   async healthCheck(): Promise<StorageHealth> {
@@ -39,6 +30,12 @@ export class LocalSessionStorage {
 
   async ensureSessionRoot(sessionId: string) {
     await ensureDir(this.resolveSessionRoot(sessionId));
+  }
+
+  async saveUpload(sessionId: string, relativePath: string, contents: Buffer) {
+    const destinationPath = resolveWithin(this.resolveSessionRoot(sessionId), relativePath);
+    await ensureDir(dirname(destinationPath));
+    await writeFile(destinationPath, contents);
   }
 
   async stageFiles(sessionId: string, filePaths: string[], workspacePath: string) {
@@ -89,6 +86,7 @@ export class LocalSessionStorage {
   async sessionExists(sessionId: string) {
     return pathExists(this.resolveSessionRoot(sessionId));
   }
+
   resolveSessionRoot(sessionId: string) {
     return resolveWithin(this.rootPath, sessionId);
   }

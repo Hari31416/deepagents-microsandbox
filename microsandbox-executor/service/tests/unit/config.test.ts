@@ -5,12 +5,18 @@ import { loadConfig } from "../../src/config.js";
 
 test("loadConfig uses local session storage settings", () => {
   const config = loadConfig({
-    SESSION_STORAGE_ROOT: "/tmp/sessions",
-    SQLITE_DB_PATH: "/tmp/sessions/metadata.sqlite"
+    EXECUTOR_DATABASE_URL: "postgresql://demo:demo@localhost:5432/demo",
+    MINIO_END_POINT: "127.0.0.1",
+    MINIO_PORT: "9010",
+    MINIO_BUCKET: "demo-bucket",
+    MINIO_SESSION_PREFIX: "demo-prefix"
   });
 
-  assert.equal(config.sessionStorageRoot, "/tmp/sessions");
-  assert.equal(config.sqliteDbPath, "/tmp/sessions/metadata.sqlite");
+  assert.equal(config.databaseUrl, "postgresql://demo:demo@localhost:5432/demo");
+  assert.equal(config.minio.endPoint, "127.0.0.1");
+  assert.equal(config.minio.port, 9010);
+  assert.equal(config.minio.bucket, "demo-bucket");
+  assert.equal(config.minio.sessionPrefix, "demo-prefix");
   assert.equal(config.sessionTtlSeconds, 24 * 60 * 60);
   assert.equal(config.sessionCleanupIntervalSeconds, 10 * 60);
   assert.equal(config.maxUploadBytes, 20 * 1024 * 1024);

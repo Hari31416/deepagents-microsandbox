@@ -8,7 +8,7 @@ export async function registerExecuteRoutes(app: FastifyInstance, services: AppS
   app.post("/v1/execute", async (request, reply) => {
     try {
       const payload = executeRequestSchema.parse(request.body);
-      const existingJob = payload.jobId ? services.executor.get(payload.jobId) : null;
+      const existingJob = payload.jobId ? await services.executor.get(payload.jobId) : null;
 
       if (existingJob) {
         return reply.code(409).send({
@@ -43,7 +43,7 @@ export async function registerExecuteRoutes(app: FastifyInstance, services: AppS
   app.post("/v1/execute/bash", async (request, reply) => {
     try {
       const payload = executeBashRequestSchema.parse(request.body);
-      const existingJob = payload.jobId ? services.executor.get(payload.jobId) : null;
+      const existingJob = payload.jobId ? await services.executor.get(payload.jobId) : null;
 
       if (existingJob) {
         return reply.code(409).send({

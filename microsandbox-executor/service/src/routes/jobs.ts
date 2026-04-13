@@ -11,7 +11,7 @@ export async function registerJobRoutes(app: FastifyInstance, services: AppServi
       return reply.code(400).send({ error: "jobId is required" });
     }
 
-    const record = services.executor.get(params.jobId);
+    const record = await services.executor.get(params.jobId);
 
     if (!record) {
       return reply.code(404).send({ error: "Job not found" });
