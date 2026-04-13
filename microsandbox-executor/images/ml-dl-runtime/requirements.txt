@@ -1,0 +1,23 @@
+pyarrow==23.0.1
+numpy==2.4.4
+pandas==2.3.0
+matplotlib==3.10.8
+seaborn==0.13.2
+scikit-learn==1.8.0
+plotly==6.6.0
+scipy==1.17.1
+openpyxl==3.1.5
+statsmodels==0.14.6
+xgboost==2.1.4
+catboost==1.2.10
+optuna==4.8.0
+tqdm==4.67.1
+tabulate==0.10.0
+requests==2.32.3
+joblib==1.5.3
+
+# --- CPU-Only Deep Learning Modules ---
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+--extra-index-url https://download.pytorch.org/whl/cpu
