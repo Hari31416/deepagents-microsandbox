@@ -17,47 +17,47 @@ You are an expert Full Stack Engineer for this project.
   - `backend/` – Python source code (assumed structure based on guidelines).
   - `frontend/` – TypeScript source code (assumed structure based on guidelines).
   - `docs/` – Project documentation.
-  - `.env`, `.env.example`, `Makefile`, `docker-compose.yml` – Configuration and orchestration.
+  - `.env`, `.env.example`, `justfile`, `docker-compose.yml` – Configuration and orchestration.
 
 ## Commands you can use
 
-You primarily use `make` commands to manage the lifecycle of the application.
+You primarily use `just` commands to manage the lifecycle of the application.
 
 ### Infra Management
 
-- `make up`: Ups the infra only.
-- `make down`: Downs the infra only.
-- `make nuke`: Downs and deleted any volume.
-- `make up-all`: Ups infra + backend + frontend.
-- `make down-all`: Downs infra + backend + frontend.
-- `make nuke-all`: Downs and deletes any volume for infra + backend + frontend.
+- `just up`: Ups the infra only.
+- `just down`: Downs the infra only.
+- `just nuke`: Downs and deleted any volume.
+- `just up-all`: Ups infra + backend + frontend.
+- `just down-all`: Downs infra + backend + frontend.
+- `just nuke-all`: Downs and deletes any volume for infra + backend + frontend.
 
 ### Backend Commands
 
-- `make install-uv`: Installs `uv` package manager.
-- `make backend-start`: Starts backend on specified port.
-- `make backend-stop`: Stops backend safely.
-- `make backend-setup`: Setups backend (`uv sync`).
-- `make logs-backend`: Tails backend logs.
+- `just install-uv`: Installs `uv` package manager.
+- `just backend-start`: Starts backend on specified port.
+- `just backend-stop`: Stops backend safely.
+- `just backend-setup`: Setups backend (`uv sync`).
+- `just logs-backend`: Tails backend logs.
 
 ### Frontend Commands
 
-- `make install-pnpm`: Installs `pnpm` package manager.
-- `make frontend-start`: Starts frontend on specified port.
-- `make frontend-stop`: Stops frontend safely.
-- `make frontend-setup`: Setups frontend (`pnpm install`).
-- `make frontend-preview`: Builds and serves for preview.
-- `make logs-frontend`: Tails frontend logs.
+- `just install-pnpm`: Installs `pnpm` package manager.
+- `just frontend-start`: Starts frontend on specified port.
+- `just frontend-stop`: Stops frontend safely.
+- `just frontend-setup`: Setups frontend (`pnpm install`).
+- `just frontend-preview`: Builds and serves for preview.
+- `just logs-frontend`: Tails frontend logs.
 
 ### Combined Commands
 
-- `make start`: Runs `up` + `backend-start` + `frontend-start`.
-- `make stop`: Runs `backend-stop` + `frontend-stop` + `down`.
-- `make setup`: Runs `backend-setup` + `frontend-setup`.
-- `make restart`: Runs `stop` + `start`.
-- `make logs`: Tails logs from both backend and frontend.
-- `make ps`: Shows status of infra, backend and frontend.
-- `make health`: Checks health of services.
+- `just start`: Runs `up` + `backend-start` + `frontend-start`.
+- `just stop`: Runs `backend-stop` + `frontend-stop` + `down`.
+- `just setup`: Runs `backend-setup` + `frontend-setup`.
+- `just restart`: Runs `stop` + `start`.
+- `just logs`: Tails logs from both backend and frontend.
+- `just ps`: Shows status of infra, backend and frontend.
+- `just health`: Checks health of services.
 
 ## Engineering Standards
 
