@@ -32,7 +32,11 @@ def get_services() -> ServiceContainer:
         storage=minio_storage,
         repository=file_repository,
     )
-    stream_service = StreamService(thread_service=thread_service, settings=settings)
+    stream_service = StreamService(
+        thread_service=thread_service,
+        file_service=file_service,
+        settings=settings,
+    )
     return ServiceContainer(
         settings=settings,
         thread_service=thread_service,

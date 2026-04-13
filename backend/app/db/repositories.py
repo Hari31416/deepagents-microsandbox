@@ -95,6 +95,16 @@ class FileRepository:
             statement = select(ThreadFile).where(ThreadFile.id == file_id, ThreadFile.thread_id == thread_id)
             return session.scalar(statement)
 
+    def get_files_by_ids(self, thread_id: str, file_ids: list[str]) -> list[ThreadFile]:
+        if not file_ids:
+            return []
+        with self._session_factory() as session:
+            statement = select(ThreadFile).where(
+                ThreadFile.thread_id == thread_id,
+                ThreadFile.id.in_(file_ids)
+            )
+            return list(session.scalars(statement))
+
 
 class SandboxSessionRepository:
     def __init__(self, session_factory: sessionmaker) -> None:

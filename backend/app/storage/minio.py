@@ -53,6 +53,14 @@ class MinioStorage:
             required_headers={},
         )
 
+    def get_object(self, object_key: str) -> bytes:
+        response = self._client.get_object(self.bucket_name, object_key)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
     @staticmethod
     def _expires_at(expires: timedelta) -> str:
         return (datetime.now(timezone.utc) + expires).isoformat()

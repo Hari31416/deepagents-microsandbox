@@ -1,15 +1,12 @@
 from dataclasses import asdict, dataclass
-
+from typing import Any, Literal
 from app.db.repositories import FileRepository
-from app.services.thread_service import ThreadService
 from app.storage.minio import MinioStorage
-
 
 @dataclass
 class FileRecord:
     file_id: str
     thread_id: str
-    object_key: str
     original_filename: str
     content_type: str
     size: int
@@ -17,17 +14,17 @@ class FileRecord:
     status: str
     created_at: str
 
-
 class FileService:
+
     def __init__(
         self,
-        thread_service: ThreadService,
-        storage: MinioStorage,
         repository: FileRepository,
+        thread_service=None,
+        storage: MinioStorage | None = None,
     ) -> None:
+        self._repository = repository
         self._thread_service = thread_service
         self._storage = storage
-        self._repository = repository
 
     def create_upload_ticket(
         self,
@@ -36,16 +33,27 @@ class FileService:
         filename: str,
         content_type: str,
         size: int,
-        purpose: str,
-    ) -> dict[str, object]:
-        self._require_owned_thread(owner_id, thread_id)
+        purpose: str = "upload",
+    ) -> dict[str, Any]:
+        if not self._storage:
+            raise ValueError("Storage not configured")
+
+        # Verify thread exists and belongs to owner
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_owner(
+                owner_id=owner_id, thread_id=thread_id
+            )
+            if not thread:
+                raise ValueError("Thread not found")
+
         file_id = self._storage.allocate_file_id()
-        object_key = f"threads/{thread_id}/{purpose}s/{file_id}/{filename}"
+        object_key = f"{thread_id}/{file_id}/{filename}"
         ticket = self._storage.create_presigned_upload(object_key)
+
         return {
             "file_id": file_id,
             "thread_id": thread_id,
-            "object_key": ticket.object_key,
+            "object_key": object_key,
             "url": ticket.url,
             "required_headers": ticket.required_headers,
             "expires_at": ticket.expires_at,
@@ -61,9 +69,15 @@ class FileService:
         original_filename: str,
         content_type: str,
         size: int,
-        purpose: str,
-    ) -> dict[str, object]:
-        self._require_owned_thread(owner_id, thread_id)
+        purpose: str = "upload",
+    ) -> dict[str, Any]:
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_owner(
+                owner_id=owner_id, thread_id=thread_id
+            )
+            if not thread:
+                raise ValueError("Thread not found")
+
         record = self._repository.create_file(
             thread_id=thread_id,
             object_key=object_key,
@@ -71,7 +85,7 @@ class FileService:
             kind=purpose,
             content_type=content_type,
             size=size,
-            status="uploaded",
+            status="completed",
         )
         return asdict(self._to_record(record))
 
@@ -79,42 +93,70 @@ class FileService:
         self,
         owner_id: str,
         thread_id: str,
-        file_id: str | None,
-        object_key: str | None,
-    ) -> dict[str, object]:
-        self._require_owned_thread(owner_id, thread_id)
-        resolved_object_key = object_key or self._resolve_file_id(thread_id=thread_id, file_id=file_id)
-        ticket = self._storage.create_presigned_download(resolved_object_key)
+        file_id: str | None = None,
+        object_key: str | None = None,
+    ) -> dict[str, Any]:
+        if not self._storage:
+            raise ValueError("Storage not configured")
+
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_owner(
+                owner_id=owner_id, thread_id=thread_id
+            )
+            if not thread:
+                raise ValueError("Thread not found")
+
+        if not object_key and file_id:
+            record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
+            if not record:
+                raise ValueError("File not found")
+            object_key = record.object_key
+
+        if not object_key:
+            raise ValueError("Either file_id or object_key must be provided")
+
+        ticket = self._storage.create_presigned_download(object_key)
         return {
             "thread_id": thread_id,
-            "object_key": ticket.object_key,
+            "object_key": object_key,
             "url": ticket.url,
             "required_headers": ticket.required_headers,
             "expires_at": ticket.expires_at,
         }
 
-    def list_files(self, owner_id: str, thread_id: str) -> list[dict[str, object]]:
-        self._require_owned_thread(owner_id, thread_id)
-        return [asdict(self._to_record(record)) for record in self._repository.list_files(thread_id=thread_id)]
+    def list_files(self, owner_id: str, thread_id: str) -> list[dict]:
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_owner(
+                owner_id=owner_id, thread_id=thread_id
+            )
+            if not thread:
+                raise ValueError("Thread not found")
 
-    def _require_owned_thread(self, owner_id: str, thread_id: str) -> None:
-        if self._thread_service.get_thread_for_owner(owner_id=owner_id, thread_id=thread_id) is None:
-            raise ValueError("Thread not found")
+        records = self._repository.list_files(thread_id=thread_id)
+        return [asdict(self._to_record(r)) for r in records]
 
-    def _resolve_file_id(self, thread_id: str, file_id: str | None) -> str:
-        if file_id is None:
-            raise ValueError("Either file_id or object_key is required")
+    def list_files_by_ids(self, thread_id: str, file_ids: list[str]) -> list[dict]:
+        records = self._repository.get_files_by_ids(
+            thread_id=thread_id, file_ids=file_ids
+        )
+        return [asdict(self._to_record(r)) for r in records]
+
+    def get_file_content(self, thread_id: str, file_id: str) -> tuple[str, bytes]:
+        if not self._storage:
+            raise ValueError("Storage not configured")
+
         record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
-        if record is None:
+        if not record:
             raise ValueError("File not found")
-        return record.object_key
+
+        content = self._storage.get_object(record.object_key)
+        return record.filename, content
 
     @staticmethod
     def _to_record(record) -> FileRecord:
         return FileRecord(
             file_id=record.id,
             thread_id=record.thread_id,
-            object_key=record.object_key,
             original_filename=record.filename,
             content_type=record.content_type,
             size=record.size,
