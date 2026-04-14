@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+psycopg://deepagent:deepagent_password@localhost:5432/deepagent"
     )
+    postgres_uri: str | None = Field(default=None, alias="POSTGRES_URI")
     executor_base_url: str = "http://localhost:3000"
     langgraph_base_url: str = "http://localhost:8123"
     langgraph_assistant_id: str = "data-analyst"
@@ -30,6 +31,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def apply_langgraph_postgres_uri(self) -> "Settings":
+        if self.postgres_uri:
+            self.database_url = self.postgres_uri.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self
 
 
 @lru_cache(maxsize=1)

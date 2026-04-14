@@ -4,6 +4,7 @@ __pycache__/
 .ipynb_checkpoints/
 *.log
 .env
+.langgraph.env
 .env.local
 .env.*.local
 .run/

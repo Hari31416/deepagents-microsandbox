@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 from functools import lru_cache
 
 from app.agent.backend import MicrosandboxBackend
@@ -35,22 +34,6 @@ def create_backend(runtime):
 
 
 @lru_cache(maxsize=1)
-def get_checkpointer():
-    try:
-        from langgraph.checkpoint.postgres import PostgresSaver
-    except ImportError:  # pragma: no cover - dependency-level guard
-        return None
-
-    settings = get_settings()
-    # psycopg (used by PostgresSaver) doesn't like the +psycopg suffix used by SQLAlchemy
-    conn_string = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
-    manager = PostgresSaver.from_conn_string(conn_string)
-    checkpointer = manager.__enter__()
-    checkpointer.setup()
-    atexit.register(manager.__exit__, None, None, None)
-    return checkpointer
-
-
 def build_langgraph_app():
     try:
         from deepagents import create_deep_agent
@@ -69,6 +52,5 @@ def build_langgraph_app():
         system_prompt=SYSTEM_PROMPT,
         backend=create_backend,
         context_schema=AgentContext,
-        checkpointer=get_checkpointer(),
         name="data-analyst",
     )

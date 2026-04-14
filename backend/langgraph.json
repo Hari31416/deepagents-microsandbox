@@ -1,7 +1,9 @@
 {
+  "python_version": "3.13",
   "graphs": {
     "data-analyst": "app.agent.graph:build_langgraph_app"
   },
+  "env": ".langgraph.env",
   "http": {
     "configurable_headers": {
       "includes": ["x-user-id", "x-thread-id", "x-org-id"]

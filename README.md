@@ -6,8 +6,8 @@ The system is being built around:
 
 - [DeepAgents](https://github.com/langchain-ai/deepagents) for the agent harness
 - [microsandbox](https://github.com/superradcompany/microsandbox) for isolated code execution
-- LangGraph deployment for streaming, resumability, and checkpointed agent execution
-- Postgres for product metadata and LangGraph checkpoints
+- LangGraph deployment/runtime for streaming, resumability, and durable agent execution
+- Postgres for product metadata and LangGraph runtime persistence
 - MinIO for uploads and generated artifact storage
 - Redis only where it is actually needed
 
@@ -22,6 +22,8 @@ Current direction:
 - `frontend/` will be built later from scratch after the backend and agent flow are stable
 
 The authoritative build plan is in [implementation_plan.md](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/implementation_plan.md).
+
+The runtime migration decision is documented in [docs/self-hosted-runtime-migration.md](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/docs/self-hosted-runtime-migration.md).
 
 ## Product Goal
 
@@ -82,9 +84,9 @@ This repo does not modify `microsandbox` directly. Instead, it uses a dedicated 
 - captures stdout/stderr/exit data
 - persists generated files back to object storage
 
-### LangGraph Deployment
+### LangGraph Runtime
 
-LangGraph deployment will be used as the runtime for the agent graph because it gives us:
+LangGraph will be used as the runtime for the agent graph because it gives us:
 
 - streaming
 - resumable thread execution
@@ -128,6 +130,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
+For the Docker-backed LangGraph runtime, local development also requires `LANGSMITH_API_KEY` or `LANGGRAPH_CLOUD_LICENSE_KEY` in `.env`.
+
 Default local endpoints:
 
 - Postgres: `localhost:5432`
@@ -162,7 +166,7 @@ Postgres will store:
 - threads
 - file and artifact metadata
 - sandbox session mappings
-- LangGraph checkpoints
+- LangGraph runtime state
 
 ### MinIO
 
