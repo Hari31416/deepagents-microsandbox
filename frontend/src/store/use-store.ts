@@ -7,6 +7,7 @@ interface AppState {
   threadFiles: Record<string, ThreadFile[]>
   isSidebarOpen: boolean
   isWorkspaceOpen: boolean
+  selectedFile: ThreadFile | null
   
   setThreads: (threads: Thread[]) => void
   setActiveThreadId: (id: string | null) => void
@@ -14,6 +15,7 @@ interface AppState {
   updateThreadTitle: (threadId: string, title: string) => void
   toggleSidebar: () => void
   toggleWorkspace: () => void
+  setSelectedFile: (file: ThreadFile | null) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -22,7 +24,8 @@ export const useStore = create<AppState>((set) => ({
   threadFiles: {},
   isSidebarOpen: true,
   isWorkspaceOpen: true,
-
+  selectedFile: null,
+  
   setThreads: (threads) => set({ threads }),
   setActiveThreadId: (activeThreadId) => set({ activeThreadId }),
   setThreadFiles: (threadId, files) => 
@@ -37,4 +40,5 @@ export const useStore = create<AppState>((set) => ({
     })),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   toggleWorkspace: () => set((state) => ({ isWorkspaceOpen: !state.isWorkspaceOpen })),
+  setSelectedFile: (selectedFile) => set({ selectedFile }),
 }))
