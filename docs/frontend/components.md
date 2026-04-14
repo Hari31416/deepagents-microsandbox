@@ -18,6 +18,16 @@ A collapsible right panel that serves multiple roles:
 - **Artifact Viewer**: Provides a high-fidelity view of code, charts, or detailed data tables.
 - **Trace List**: Shows the step-by-step execution path of the agent for the current run.
 
+### `LoginScreen`
+
+**Location**: `src/components/login-screen.tsx`
+
+The primary entry point of the application.
+
+- **Unified Mega-Card**: A high-depth container utilizing `backdrop-blur` and multi-layered radial gradients.
+- **Role Awareness**: Communicates the benefits of role-aware access (RBAC) to users before they sign in.
+- **Glassmorphism**: Implements modern design tokens from the global design system for a sleek, "AI" feel.
+
 ### `Sidebar`
 The left navigation area for managing threads, including creation, renaming, and switching.
 

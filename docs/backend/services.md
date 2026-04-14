@@ -6,9 +6,17 @@ The service layer contains the core business logic of the application. It orches
 
 Defined in `app/services/`.
 
-### `ThreadService`
-- **Responsibility**: Management of user threads.
-- **Key Methods**: `get_threads`, `create_thread`, `get_thread`.
+### ThreadService
+
+**Location**: `app/services/thread_service.py`
+
+Responsible for the lifecycle of conversations and enforcing role-based visibility rules.
+
+- **`create_thread`**: Initializes a new conversation with an optional title.
+- **`list_threads`**: Dynamically filters threads. Admins/Super Admins receive every thread in the system, while regular Users are restricted to threads where they are the `owner_id`.
+- **`get_thread_for_actor`**: A security-conscious getter that verifies permissions before returning thread metadata.
+- **`update_thread_title`**: Allows owners (and admins) to rename conversations.
+- **`delete_thread`**: Handles soft-deletion and triggers cleanup of associated files in MinIO storage.
 
 ### `MessageService`
 - **Responsibility**: Handling message persistence and retrieval.
