@@ -187,10 +187,10 @@ export function ChatArea() {
             
             // Only update content if we don't have a streaming delta version
             // or if the update provides a significantly cleaner/final version
+            // Heuristic: check if updateContent looks like raw tool output or internal state updates
             let nextContent = currentContent
             if (updateContent && (!currentContent || updateContent.length > currentContent.length)) {
-              // Heuristic: check if updateContent looks like raw tool output (CSV, JSON, etc)
-              const looksLikeRawData = /^[\[\{]|CUST_ID|BALANCE|original_filename/.test(updateContent)
+              const looksLikeRawData = /^[\[\{]|CUST_ID|BALANCE|original_filename|Updated todo list to/.test(updateContent)
               if (!looksLikeRawData) {
                 nextContent = updateContent
               }
@@ -315,6 +315,10 @@ export function ChatArea() {
           </Button>
         </div>
       </header>
+
+      {getLatestTodos(activeMessages).length > 0 && (
+        <StickyTodoPanel todos={getLatestTodos(activeMessages)} />
+      )}
 
       <ScrollArea className="flex-1 h-full">
         <div className="max-w-4xl mx-auto py-10 px-8 space-y-12">
@@ -582,6 +586,133 @@ function LiveTrace({
   )
 }
 
+function StickyTodoPanel({ todos }: { todos: Todo[] }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  if (!todos.length) return null
+
+  const completedCount = todos.filter((t) => t.status === "completed").length
+  const progress = (completedCount / todos.length) * 100
+  const activeTask = todos.find((t) => t.status === "in_progress") || todos.find((t) => t.status === "pending")
+
+  return (
+    <div className="sticky top-0 z-30 px-8 py-2 pointer-events-none">
+      <div className="max-w-4xl mx-auto pointer-events-auto">
+        <motion.div
+          initial={{ y: -10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="glass rounded-xl border border-primary/20 shadow-lg shadow-primary/5 overflow-hidden"
+        >
+          <div
+            className="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-slate-50/50 dark:hover:bg-white/5 transition-colors"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                <ListTodo className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-bold text-slate-700 dark:text-slate-100 truncate">
+                  {activeTask 
+                    ? activeTask.content 
+                    : todos.every(t => t.status === "completed") 
+                      ? "Analysis Complete" 
+                      : "Preparing next steps..."}
+                </div>
+              </div>
+              <div className="flex items-center gap-4 px-2">
+                <div className="hidden sm:flex items-center gap-3">
+                  <div className="w-20 h-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-200/50 dark:border-slate-800/50">
+                    <motion.div
+                      className="h-full bg-primary"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider tabular-nums">
+                    {completedCount}/{todos.length}
+                  </span>
+                </div>
+                <div className={cn(
+                  "p-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-400 transition-all",
+                  isExpanded && "rotate-180 text-primary"
+                )}>
+                  <ChevronDown className="h-3 w-3" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <AnimatePresence>
+            {isExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: "easeInOut" }}
+                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/50"
+              >
+                <div className="p-4 pt-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar bg-slate-50/50 dark:bg-slate-950/20">
+                  {todos.map((todo, idx) => (
+                    <motion.div
+                      key={idx}
+                      initial={{ x: -10, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ delay: idx * 0.03 }}
+                      className="flex items-start gap-3 group"
+                    >
+                      <div className="mt-0.5 shrink-0 transition-transform group-hover:scale-110">
+                        {todo.status === "completed" ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        ) : todo.status === "in_progress" ? (
+                          <CircleDashed className="h-3.5 w-3.5 text-primary animate-spin" />
+                        ) : todo.status === "failed" ? (
+                          <Info className="h-3.5 w-3.5 text-rose-500" />
+                        ) : (
+                          <Circle className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" />
+                        )}
+                      </div>
+                      <span
+                        className={cn(
+                          "text-xs leading-snug transition-all",
+                          todo.status === "completed"
+                            ? "text-slate-400 line-through"
+                            : todo.status === "in_progress"
+                              ? "text-slate-900 dark:text-white font-medium"
+                              : "text-slate-600 dark:text-slate-400",
+                        )}
+                      >
+                        {todo.content}
+                      </span>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </div>
+    </div>
+  )
+}
+
+function getLatestTodos(messages: Message[]): Todo[] {
+  // Traverse backwards to find the most recent set of todos
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role === "assistant" && message.activities) {
+      // Find the latest activity that looks like a todo update
+      const todoActivity = [...message.activities]
+        .reverse()
+        .find((a) => a.label.includes("write_todos") && a.args)
+
+      if (todoActivity && todoActivity.args) {
+        return parseTodos(todoActivity.args)
+      }
+    }
+  }
+  return []
+}
+
 function TodoList({ todos }: { todos: Todo[] }) {
   if (!todos.length) return null
 
@@ -675,6 +806,22 @@ function extractStreamState(payload: unknown): StreamEnvelope {
   let activities: StreamActivity[] = []
 
   for (const [nodeName, nodeData] of Object.entries(payload as Record<string, unknown>)) {
+    // Skip nodes that are primarily for state management or internal orchestration
+    const isInternalNode = [
+      "write_todos",
+      "task",
+      "plan",
+      "orchestrator",
+      "planner",
+      "tools",
+      "__start__",
+      "__end__"
+    ].includes(nodeName)
+
+    if (isInternalNode) {
+      // Still process these for activities (to show in trace), but don't let them update main chat content
+    }
+
     if (nodeData === null) {
       activities = upsertActivity(activities, {
         id: `${nodeName}-idle`,
@@ -686,14 +833,28 @@ function extractStreamState(payload: unknown): StreamEnvelope {
     }
 
     for (const message of extractNodeMessages(nodeData)) {
-      if ((message.type === "ai" || message.role === "assistant") && typeof message.content === "string" && message.content.trim()) {
-        content = message.content
+      const isAssistant = message.type === "ai" || message.role === "assistant"
+      const messageContent = typeof message.content === "string" ? message.content.trim() : ""
+
+      // Structural filter: If it's an assistant message, it only counts as "Chat Content" if:
+      // 1. It's not from an internal node
+      // 2. It doesn't contain tool calls (meaning it's a final prose response, not a planning step)
+      // 3. It's not a technical status update (like "Updated todo list...")
+      if (isAssistant && messageContent && !isInternalNode) {
+        const hasToolCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0
+        const isTechnicalUpdate = messageContent.startsWith("Updated todo list") || messageContent.startsWith("Plan updated")
+
+        if (!hasToolCalls && !isTechnicalUpdate) {
+          content = messageContent
+        }
+
+      // Even if we don't show it in main content, we show it in the trace
         activities = upsertActivity(activities, {
           id: message.id || `${nodeName}-assistant`,
           kind: "status",
           state: "done",
-          label: "Draft response updated",
-          detail: previewText(message.content),
+          label: "Internal thought",
+          detail: previewText(messageContent),
         })
       }
 
