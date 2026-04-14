@@ -19,6 +19,7 @@ This project provides a robust environment for building, testing, and deploying 
 - [Frontend Documentation](./frontend/README.md): React project structure and patterns.
 - [API Reference](./api-reference/backend-endpoints.md): Backend endpoint specifications.
 - [Development Guide](./development/local-setup.md): How to get started locally.
+- [RBAC Authentication Plan](../future_enhancements/rbac-authentication-implementation-plan.md): Planned authentication, authorization, and DeepAgents tenancy model.
 
 ## Getting Started
 
