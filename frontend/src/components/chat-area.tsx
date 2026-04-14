@@ -18,6 +18,7 @@ import {
   Wrench,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface StreamActivity {
   id: string
@@ -25,6 +26,8 @@ interface StreamActivity {
   detail?: string
   kind: "metadata" | "tool_call" | "tool_result" | "status" | "error"
   state: "live" | "done" | "error"
+  args?: string
+  result?: string
 }
 
 interface Message {
@@ -52,9 +55,13 @@ export function ChatArea() {
   const activeThread = threads.find((thread) => thread.thread_id === activeThreadId)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [activeMessages])
+    if (bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [activeMessages, isStreaming])
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -165,10 +172,22 @@ export function ChatArea() {
 
         if (event.event === "updates") {
           const streamState = extractStreamState(event.data)
-          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
-            content: streamState.content ?? message.content,
-            activities: mergeActivities(message.activities, streamState.activities),
-          }))
+          updateAssistantMessage(threadId, assistantMsgId, (message) => {
+            // Only use content from updates if we don't have enough content from deltas yet
+            // or if the update content is significantly longer/different
+            const currentContent = message.content || ""
+            const updateContent = streamState.content || ""
+            
+            let nextContent = currentContent
+            if (updateContent && (updateContent.length > currentContent.length || !currentContent)) {
+               nextContent = updateContent
+            }
+
+            return {
+              content: nextContent,
+              activities: mergeActivities(message.activities, streamState.activities),
+            }
+          })
           continue
         }
 
@@ -320,9 +339,16 @@ export function ChatArea() {
                   />
                 )}
 
-                <div className="prose prose-sm prose-slate dark:prose-invert max-w-none">
-                  <ReactMarkdown>{message.content || (message.isStreaming ? "_Thinking..._" : "")}</ReactMarkdown>
-                  {message.isStreaming && <Loader2 className="h-4 w-4 animate-spin text-slate-400 mt-2" />}
+                <div className="prose prose-sm prose-slate dark:prose-invert max-w-none prose-pre:bg-slate-900 prose-pre:text-slate-50">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.content || (message.isStreaming ? "_Thinking..._" : "")}
+                  </ReactMarkdown>
+                  {message.isStreaming && (
+                    <div className="flex items-center gap-2 text-slate-400 mt-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span className="text-[10px] animate-pulse">Generating response...</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -338,6 +364,9 @@ export function ChatArea() {
   )
 }
 
+import { ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+
 function LiveTrace({
   activities,
   runId,
@@ -347,53 +376,125 @@ function LiveTrace({
   runId?: string
   isStreaming: boolean
 }) {
+  const [isExpanded, setIsExpanded] = useState(true)
+
   if (!runId && activities.length === 0 && !isStreaming) {
     return null
   }
 
+  // Hide "Draft response updated" activities to avoid duplication
+  const filteredActivities = activities.filter(a => a.label !== "Draft response updated")
+
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(135deg,rgba(248,250,252,0.98),rgba(241,245,249,0.84))] px-3 py-3 shadow-[0_20px_40px_-32px_rgba(15,23,42,0.9)]">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-          <Radio className={cn("h-3.5 w-3.5", isStreaming && "animate-pulse text-emerald-600")} />
+    <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(135deg,rgba(248,250,252,0.98),rgba(241,245,249,0.84))] dark:bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.9))] shadow-[0_20px_40px_-32px_rgba(15,23,42,0.9)] overflow-hidden transition-all duration-300">
+      <div 
+        className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-2.5 text-[10px] uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400 font-bold">
+          <div className="relative">
+            <Radio className={cn("h-3.5 w-3.5", isStreaming && "animate-pulse text-emerald-600")} />
+            {isStreaming && (
+              <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            )}
+          </div>
           Live Trace
         </div>
-        {runId ? (
-          <div className="text-[10px] text-slate-500 font-medium">Run {truncateMiddle(runId, 18)}</div>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {runId && (
+            <div className="text-[10px] text-slate-400 font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+              {truncateMiddle(runId, 12)}
+            </div>
+          )}
+          <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full text-slate-400 p-0">
+            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
 
-      <div className="mt-3 space-y-2">
-        {activities.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
-            Waiting for the first streaming update...
-          </div>
-        ) : (
-          activities.map((activity) => (
-            <div
-              key={activity.id}
-              className={cn(
-                "flex items-start gap-3 rounded-xl border px-3 py-2 transition-colors",
-                activity.state === "error"
-                  ? "border-rose-200 bg-rose-50/80"
-                  : activity.state === "done"
-                    ? "border-emerald-200 bg-emerald-50/70"
-                    : "border-slate-200 bg-white/70",
-              )}
-            >
-              <div className="mt-0.5 shrink-0">{getActivityIcon(activity)}</div>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-slate-800">{activity.label}</div>
-                {activity.detail ? (
-                  <div className="mt-1 text-[11px] leading-5 text-slate-500 break-words prose prose-xs prose-slate max-w-none">
-                    <ReactMarkdown>{activity.detail}</ReactMarkdown>
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="px-3 pb-3 pt-1 space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
+              {filteredActivities.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-800 px-4 py-3 text-xs text-slate-400 text-center italic">
+                  Waiting for events...
+                </div>
+              ) : (
+                filteredActivities.map((activity) => (
+                  <div
+                    key={activity.id}
+                    className={cn(
+                      "group relative flex flex-col gap-2 rounded-xl border p-3 transition-all duration-200",
+                      activity.state === "error"
+                        ? "border-rose-200 bg-rose-50/50 dark:border-rose-900/30 dark:bg-rose-950/20"
+                        : activity.state === "done"
+                          ? "border-emerald-100 bg-emerald-50/30 dark:border-emerald-900/20 dark:bg-emerald-950/10"
+                          : "border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/60 shadow-sm",
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="mt-0.5 shrink-0 p-1.5 rounded-lg bg-white/80 dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700">
+                        {getActivityIcon(activity)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                          {activity.label}
+                          {activity.state === "live" && (
+                            <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          )}
+                        </div>
+                        {activity.detail && !activity.args && !activity.result && (
+                          <div className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 break-words line-clamp-2 group-hover:line-clamp-none transition-all">
+                            {activity.detail}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 ml-10">
+                      {activity.args && (
+                        <div className="rounded-lg bg-slate-900/5 dark:bg-slate-50/5 border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+                          <div className="flex items-center justify-between px-2 py-1 bg-slate-100 dark:bg-slate-800 border-b border-slate-200/50 dark:border-slate-700/50">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Input Parameters</span>
+                            <div className="flex gap-1">
+                               <div className="h-1.5 w-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
+                               <div className="h-1.5 w-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
+                            </div>
+                          </div>
+                          <div className="p-2 text-[10px] font-mono leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto bg-white/40 dark:bg-black/20">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.args}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+
+                      {activity.result && (
+                        <div className="rounded-lg bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 dark:border-emerald-500/20 overflow-hidden">
+                          <div className="flex items-center justify-between px-2 py-1 bg-emerald-50/50 dark:bg-emerald-950/30 border-b border-emerald-500/10 dark:border-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                            <span className="text-[9px] font-bold uppercase tracking-wider">Execution Result</span>
+                            <CheckCircle2 className="h-2.5 w-2.5" />
+                          </div>
+                          <div className="p-2 text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 bg-white/30 dark:bg-white/5">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.result}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ) : null}
-              </div>
+                ))
+              )}
             </div>
-          ))
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
     </div>
   )
 }
@@ -459,23 +560,25 @@ function extractStreamState(payload: unknown): StreamEnvelope {
 
       if ((message.type === "ai" || message.role === "assistant") && Array.isArray(message.tool_calls)) {
         for (const toolCall of message.tool_calls) {
+          const id = toolCall.id || `${nodeName}-${toolCall.name}`
           activities = upsertActivity(activities, {
-            id: toolCall.id || `${nodeName}-${toolCall.name}`,
+            id,
             kind: "tool_call",
             state: "live",
             label: `Running ${toolCall.name}`,
-            detail: summarizeArgs(toolCall.args),
+            args: summarizeArgs(toolCall.args),
           })
         }
       }
 
       if (message.type === "tool") {
+        const id = message.tool_call_id || message.id || `${nodeName}-${message.name}`
         activities = upsertActivity(activities, {
-          id: message.tool_call_id || message.id || `${nodeName}-${message.name}`,
+          id,
           kind: "tool_result",
           state: message.status === "success" ? "done" : "error",
           label: `${message.name} ${message.status === "success" ? "finished" : "returned an error"}`,
-          detail: previewText(typeof message.content === "string" ? message.content : JSON.stringify(message.content)),
+          result: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
         })
       }
     }
