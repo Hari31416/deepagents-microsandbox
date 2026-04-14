@@ -28,4 +28,5 @@ export interface StreamEnvelope {
   activities?: StreamActivity[]
   runId?: string
   isStreaming?: boolean
+  createdAt?: string
 }
