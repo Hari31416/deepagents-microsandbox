@@ -5,11 +5,11 @@ import type { ThreadFile } from "@/lib/api-client"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileIcon, ImageIcon, FileSpreadsheet, Download, RefreshCw, FolderOpen, Radio } from "lucide-react"
+import { FileIcon, ImageIcon, FileSpreadsheet, Download, RefreshCw, FolderOpen, PanelRightClose } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function SidePanel() {
-  const { activeThreadId, threadFiles, setThreadFiles } = useStore()
+  const { activeThreadId, threadFiles, setThreadFiles, isWorkspaceOpen, toggleWorkspace } = useStore()
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState("files")
   
@@ -53,7 +53,10 @@ export function SidePanel() {
   if (!activeThreadId) return null
 
   return (
-    <aside className="w-80 border-l border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl flex flex-col h-full overflow-hidden relative z-30">
+    <aside className={cn(
+      "w-80 border-l border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl flex flex-col h-full overflow-hidden relative z-30 transition-all duration-300",
+      !isWorkspaceOpen && "w-0 border-none px-0"
+    )}>
       <div className="p-6 border-b border-border/50 flex items-center justify-between">
         <div className="flex items-center gap-3 font-black text-[10px] tracking-[0.2em] uppercase text-slate-500">
           <div className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800">
@@ -61,9 +64,14 @@ export function SidePanel() {
           </div>
           Workspace
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-primary/5 hover:text-primary transition-all" onClick={fetchFiles} disabled={isLoading}>
-          <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-primary/5 hover:text-primary transition-all" onClick={fetchFiles} disabled={isLoading}>
+            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-primary/5 hover:text-primary transition-all" onClick={toggleWorkspace}>
+            <PanelRightClose className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
@@ -82,7 +90,7 @@ export function SidePanel() {
                   <div className="w-16 h-16 rounded-[2rem] bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 flex items-center justify-center mx-auto opacity-40">
                     <FileIcon className="h-8 w-8 text-slate-400" />
                   </div>
-                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">No uploads staged</p>
+                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">No files uploaded</p>
                 </div>
               ) : (
                 files.filter(f => f.purpose === "upload").map(file => (
@@ -101,7 +109,7 @@ export function SidePanel() {
                   <div className="w-16 h-16 rounded-[2rem] bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 flex items-center justify-center mx-auto opacity-40">
                     <Download className="h-8 w-8 text-slate-400" />
                   </div>
-                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Zero artifacts generated</p>
+                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">No artifacts yet</p>
                 </div>
               ) : (
                 files.filter(f => f.purpose !== "upload").map(file => (
@@ -112,20 +120,6 @@ export function SidePanel() {
           </ScrollArea>
         </TabsContent>
       </Tabs>
-      
-      <div className="p-6 mt-auto">
-        <div className="relative rounded-2xl overflow-hidden bg-primary/5 border border-primary/10 p-5 group transition-all hover:bg-primary/10 shadow-lg shadow-primary/5">
-          <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-            <Radio className="h-12 w-12 text-primary" />
-          </div>
-          <h4 className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-2">Sandbox Cluster</h4>
-          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed font-medium">Environment fully provisioned. Compute nodes active for secure file synthesis and analysis.</p>
-          <div className="mt-4 flex items-center gap-2">
-            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">System Healthy</span>
-          </div>
-         </div>
-      </div>
     </aside>
   )
 }

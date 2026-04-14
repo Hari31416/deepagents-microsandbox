@@ -48,7 +48,7 @@ export function Sidebar() {
           onClick={handleCreateThread}
         >
           <Plus className="h-4 w-4" />
-          <span className="text-xs font-black uppercase tracking-widest">New Intelligence</span>
+          <span className="text-xs font-black uppercase tracking-widest">New Chat</span>
         </Button>
       </div>
 
@@ -77,7 +77,7 @@ export function Sidebar() {
                 "truncate text-xs font-bold leading-none",
                 activeThreadId === thread.thread_id ? "" : "font-medium"
               )}>
-                {thread.title || "Untitled Intelligence"}
+                {thread.title || "Untitled Conversation"}
               </span>
             </button>
           ))}

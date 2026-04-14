@@ -6,12 +6,14 @@ interface AppState {
   activeThreadId: string | null
   threadFiles: Record<string, ThreadFile[]>
   isSidebarOpen: boolean
+  isWorkspaceOpen: boolean
   
   setThreads: (threads: Thread[]) => void
   setActiveThreadId: (id: string | null) => void
   setThreadFiles: (threadId: string, files: ThreadFile[]) => void
   updateThreadTitle: (threadId: string, title: string) => void
   toggleSidebar: () => void
+  toggleWorkspace: () => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -19,6 +21,7 @@ export const useStore = create<AppState>((set) => ({
   activeThreadId: null,
   threadFiles: {},
   isSidebarOpen: true,
+  isWorkspaceOpen: true,
 
   setThreads: (threads) => set({ threads }),
   setActiveThreadId: (activeThreadId) => set({ activeThreadId }),
@@ -33,4 +36,5 @@ export const useStore = create<AppState>((set) => ({
       ),
     })),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
+  toggleWorkspace: () => set((state) => ({ isWorkspaceOpen: !state.isWorkspaceOpen })),
 }))

@@ -87,53 +87,6 @@
     @apply bg-slate-300 dark:bg-slate-700/50 rounded-full hover:bg-slate-400 dark:hover:bg-slate-600/50 transition-colors;
   }
 
-  /* Markdown Enhancement */
-  .prose {
-    @apply max-w-none;
-  }
-
-  .prose pre {
-    @apply bg-slate-900/95 dark:bg-slate-950 p-6 rounded-2xl border border-slate-800 shadow-2xl my-6 overflow-x-auto text-slate-100;
-    @apply shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)];
-  }
-  
-  .prose table {
-    @apply w-full border-collapse my-8 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-md bg-white dark:bg-slate-900;
-  }
-
-  .prose thead {
-    @apply bg-slate-100/80 dark:bg-slate-800/50 backdrop-blur-md;
-  }
-
-  .prose th {
-    @apply px-5 py-4 text-left text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-[0.15em] border-b border-slate-200 dark:border-slate-800;
-  }
-
-  .prose td {
-    @apply px-5 py-4 text-[14px] text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-900 transition-colors;
-  }
-
-  .prose tr:last-child td {
-    @apply border-b-0;
-  }
-
-  .prose tr:hover td {
-    @apply bg-slate-50/50 dark:bg-slate-800/30;
-  }
-  
-  /* Animations */
-  @keyframes float {
-    0% {
-      transform: translateY(0px);
-    }
-    50% {
-      transform: translateY(-5px);
-    }
-    100% {
-      transform: translateY(0px);
-    }
-  }
-  
   .animate-float {
     animation: float 3s ease-in-out infinite;
   }

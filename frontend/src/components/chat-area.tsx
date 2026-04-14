@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ChatInput } from "./chat-input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -9,20 +8,20 @@ import { cn } from "@/lib/utils"
 import {
   Bot,
   CheckCircle2,
-  FileSearch,
-  Info,
   Loader2,
   Radio,
   Terminal,
   User as UserIcon,
-  Wrench,
   ChevronDown,
   ListTodo,
   Circle,
   CircleDashed,
+  PanelRightOpen,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { motion, AnimatePresence } from "framer-motion"
 
 interface Todo {
@@ -56,8 +55,56 @@ interface StreamEnvelope {
   isStreaming?: boolean
 }
 
+const MarkdownRenderer = ({ content, role, isStreaming }: { content: string; role: string; isStreaming?: boolean }) => {
+  if (!content && isStreaming) return null
+
+  return (
+    <div className={cn(
+      "prose transition-all max-w-none prose-sm",
+      role === "assistant" ? "prose-slate dark:prose-invert" : "prose-slate dark:prose-invert text-slate-700 dark:text-slate-300"
+    )}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ node, className, children, ...props }: any) {
+            const match = /language-(\w+)/.exec(className || "")
+            const isInline = !className
+            return !isInline && match ? (
+              <SyntaxHighlighter
+                style={vscDarkPlus as any}
+                language={match[1]}
+                PreTag="div"
+                className="rounded-xl border border-slate-800 shadow-2xl my-6 !bg-slate-900/95"
+                {...props}
+              >
+                {String(children).replace(/\n$/, "")}
+              </SyntaxHighlighter>
+            ) : (
+              <code className={cn("bg-slate-100 dark:bg-slate-800/50 px-1.5 py-0.5 rounded text-[13px] font-mono text-primary", className)} {...props}>
+                {children}
+              </code>
+            )
+          },
+          p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
+          table: ({ children }) => (
+            <div className="my-6 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+              <table className="w-full border-collapse bg-white dark:bg-slate-900/50 text-left text-sm">
+                {children}
+              </table>
+            </div>
+          ),
+          th: ({ children }) => <th className="bg-slate-50/50 dark:bg-slate-800/50 px-4 py-3 font-bold text-[11px] uppercase tracking-widest text-slate-400">{children}</th>,
+          td: ({ children }) => <td className="border-t border-slate-100 dark:border-slate-800 px-4 py-3">{children}</td>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 export function ChatArea() {
-  const { activeThreadId, threads, updateThreadTitle, setThreadFiles } = useStore()
+  const { activeThreadId, threads, updateThreadTitle, setThreadFiles, isWorkspaceOpen, toggleWorkspace } = useStore()
   const [messages, setMessages] = useState<Record<string, Message[]>>({})
   const [isStreaming, setIsStreaming] = useState(false)
   const [isHydratingHistory, setIsHydratingHistory] = useState(false)
@@ -67,7 +114,7 @@ export function ChatArea() {
 
   
   useEffect(() => {
-    if (bottomRef.current) {
+    if (bottomRef.current && (activeMessages.length > 0 || isStreaming)) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" })
     }
   }, [activeMessages, isStreaming])
@@ -295,26 +342,24 @@ export function ChatArea() {
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-bold tracking-tight truncate">{activeThread?.title || "Untitled Conversation"}</h2>
-            <Badge
-              variant="outline"
-              className="text-[9px] h-4 py-0 px-1.5 font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+          </div>
+        </div>
+        {!isWorkspaceOpen && (
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-full transition-all"
+              onClick={toggleWorkspace}
             >
-              Live
-            </Badge>
+              <PanelRightOpen className="h-4.5 w-4.5" />
+            </Button>
           </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] text-slate-400 font-mono">ID: {truncateMiddle(activeThreadId, 16)}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-full transition-all">
-            <Info className="h-4.5 w-4.5" />
-          </Button>
-        </div>
+        )}
       </header>
 
       <ScrollArea className="flex-1 h-full">
-        <div className="max-w-4xl mx-auto py-10 px-8 space-y-12">
+        <div className="max-w-4xl mx-auto py-10 px-8 space-y-12 pb-32">
           {activeMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-32 text-center space-y-6">
               <div className="relative">
@@ -324,7 +369,7 @@ export function ChatArea() {
                 </div>
               </div>
               <div className="space-y-3">
-                <h3 className="text-2xl font-black tracking-tight bg-gradient-to-br from-slate-900 to-slate-500 dark:from-white dark:to-slate-400 bg-clip-text text-transparent">Engineered to Assist</h3>
+                <h3 className="text-2xl font-black tracking-tight bg-gradient-to-br from-slate-900 to-slate-500 dark:from-white dark:to-slate-400 bg-clip-text text-transparent">DeepAgent Sandbox</h3>
                 <p className="text-sm text-slate-500 max-w-sm leading-relaxed">
                   Start an analysis by uploading datasets or asking a question. I'll leverage the sandbox to execute code and visualize results.
                 </p>
@@ -357,7 +402,7 @@ export function ChatArea() {
                   "flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em]",
                   message.role === "assistant" ? "text-primary" : "text-slate-400"
                 )}>
-                  {message.role === "assistant" ? "Intelligence Engine" : "Human Operator"}
+                  {message.role === "assistant" ? "Agent" : "You"}
                   <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800/50" />
                 </div>
 
@@ -369,17 +414,16 @@ export function ChatArea() {
                   />
                 )}
 
-                <div className={cn(
-                  "prose prose-slate dark:prose-invert max-w-none transition-all",
-                  message.role === "assistant" ? "text-[15px] leading-relaxed" : "text-slate-700 dark:text-slate-300"
-                )}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {message.content || (message.isStreaming ? "" : "")}
-                  </ReactMarkdown>
+                <div className="min-h-[1.5rem] transition-all">
+                  <MarkdownRenderer
+                    content={message.content}
+                    role={message.role}
+                    isStreaming={message.isStreaming}
+                  />
                   {message.isStreaming && !message.content && (
                     <div className="flex items-center gap-3 text-primary animate-pulse py-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="text-xs font-bold tracking-widest uppercase">Initializing Neural Synthesis...</span>
+                      <span className="text-xs font-bold tracking-widest uppercase">Thinking...</span>
                     </div>
                   )}
                 </div>
@@ -401,9 +445,9 @@ export function ChatArea() {
         </div>
       </ScrollArea>
 
-      <div className="pb-10 pt-4 px-8 max-w-4xl mx-auto w-full sticky bottom-0 z-20">
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent -top-12 pointer-events-none" />
-        <div className="relative space-y-4">
+      <div className="w-full bg-background border-t border-border/50 sticky bottom-0 z-20">
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/90 to-transparent -top-20 pointer-events-none" />
+        <div className="max-w-4xl mx-auto w-full relative px-6 py-4 space-y-4">
           {getLatestTodos(activeMessages).length > 0 && (
             <IntegratedTodoPanel todos={getLatestTodos(activeMessages)} />
           )}
@@ -451,7 +495,7 @@ function LiveTrace({
             )}
           </div>
           <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
-            {isStreaming ? "Synthesizing Thought" : "Execution Trace"}
+            {isStreaming ? "Agent Actions" : "Execution Trace"}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -481,11 +525,11 @@ function LiveTrace({
                 {filteredActivities.length === 0 && isStreaming && (
                   <div className="flex items-center gap-2 py-2 text-primary/60">
                     <Radio className="h-3 w-3 animate-pulse" />
-                    <span className="text-[10px] font-medium animate-pulse">Initializing pipeline...</span>
+                    <span className="text-[10px] font-medium animate-pulse">Initializing...</span>
                   </div>
                 )}
 
-                {filteredActivities.map((activity, idx) => (
+                {filteredActivities.map((activity) => (
                   <div key={activity.id} className="relative group/item">
                     {/* Circle on timeline */}
                     <div className={cn(
@@ -706,33 +750,7 @@ function parseTodos(args: string): Todo[] {
   return []
 }
 
-function getActivityIcon(activity: StreamActivity) {
-  if (activity.state === "error") {
-    return <Info className="h-4 w-4 text-rose-500" />
-  }
 
-  if (activity.kind === "tool_call") {
-    return activity.state === "live" ? (
-      <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-    ) : (
-      <Wrench className="h-4 w-4 text-amber-600" />
-    )
-  }
-
-  if (activity.kind === "tool_result") {
-    return <FileSearch className="h-4 w-4 text-sky-600" />
-  }
-
-  if (activity.kind === "metadata") {
-    return <Radio className="h-4 w-4 text-emerald-600" />
-  }
-
-  if (activity.state === "done") {
-    return <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-  }
-
-  return <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-}
 
 function extractStreamState(payload: unknown): StreamEnvelope {
   if (!payload || typeof payload !== "object") {
