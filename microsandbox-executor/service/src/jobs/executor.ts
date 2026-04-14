@@ -85,6 +85,7 @@ export class JobExecutor {
     const { request, runtimeImage, label, prepareExecution } = options;
     const jobId = request.jobId ?? createJobId();
     this.validateRequest(request);
+    const stagedPathsPreview = (request.filePaths ?? []).slice(0, 10);
 
     console.info("[executor] starting job", {
       timestamp: new Date().toISOString(),
@@ -93,7 +94,9 @@ export class JobExecutor {
       executionKind: label,
       image: runtimeImage,
       entrypoint: request.entrypoint,
-      fileCount: request.filePaths?.length ?? 0
+      fileCount: request.filePaths?.length ?? 0,
+      filePaths: stagedPathsPreview,
+      payloadPreview: summarizeExecutionPayload(request)
     });
 
     return this.locks.runExclusive(request.sessionId, async () => {
@@ -112,7 +115,8 @@ export class JobExecutor {
           timestamp: new Date().toISOString(),
           jobId,
           workspacePath: workspace.workspacePath,
-          fileCount: stagedPaths.length
+          fileCount: stagedPaths.length,
+          filePaths: stagedPaths.slice(0, 20)
         });
         await this.sync.stageFiles(request.sessionId, stagedPaths, workspace.workspacePath);
         const beforeManifest = await captureManifest(workspace.workspacePath);
@@ -127,7 +131,9 @@ export class JobExecutor {
           timeoutSeconds: request.timeoutSeconds ?? this.config.defaultTimeoutSeconds,
           cpuLimit: request.cpuLimit ?? this.config.defaultCpuLimit,
           memoryMb: request.memoryMb ?? this.config.defaultMemoryMb,
-          command: preparedExecution.command
+          command: preparedExecution.command,
+          args: preparedExecution.args,
+          payloadPreview: summarizeExecutionPayload(request)
         });
         const runtimeResult = await this.runtime.executeJob({
           sandboxName: createSandboxName(jobId),
@@ -159,7 +165,10 @@ export class JobExecutor {
           jobId,
           exitCode: runtimeResult.exitCode,
           durationMs: runtimeResult.durationMs,
-          uploadedFileCount: uploadedFiles.length
+          uploadedFileCount: uploadedFiles.length,
+          uploadedFiles: uploadedFiles.slice(0, 20),
+          stdoutPreview: summarizeOutput(runtimeResult.stdout),
+          stderrPreview: summarizeOutput(runtimeResult.stderr)
         });
 
         return this.metadata.completeJob(jobId, {
@@ -173,7 +182,8 @@ export class JobExecutor {
         console.error("[executor] job failed", {
           timestamp: new Date().toISOString(),
           jobId,
-          error: error instanceof Error ? error.message : "Unknown error"
+          error: error instanceof Error ? error.message : "Unknown error",
+          payloadPreview: summarizeExecutionPayload(request)
         });
         return this.metadata.failJob(jobId, error);
       } finally {
@@ -187,4 +197,37 @@ export class JobExecutor {
       }
     });
   }
+}
+
+function summarizeExecutionPayload(request: ExecuteRequest | ExecuteBashRequest) {
+  if (request.kind === "bash") {
+    return {
+      kind: "bash",
+      entrypoint: request.entrypoint,
+      scriptPreview: summarizeText(request.script)
+    };
+  }
+
+  return {
+    kind: "python",
+    entrypoint: request.entrypoint,
+    pythonProfile: request.pythonProfile,
+    codePreview: summarizeText(request.code)
+  };
+}
+
+function summarizeOutput(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  return summarizeText(normalized, 240);
+}
+
+function summarizeText(value: string, maxLength = 320) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
 }

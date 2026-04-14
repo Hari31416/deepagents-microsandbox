@@ -247,6 +247,10 @@ class StreamService:
                     updated_response_content=updated_response_content,
                     latest_content_source=latest_content_source,
                 )
+                if not final_response_content.strip():
+                    raise RuntimeError(
+                        "Run ended before the agent produced a final response"
+                    )
                 self._import_generated_artifacts(
                     actor_user_id=actor_user_id,
                     actor_role=actor_role,
@@ -508,8 +512,6 @@ class StreamService:
     @staticmethod
     def _extract_message_text(message_chunk: object) -> str:
         content = getattr(message_chunk, "text", "")
-        if callable(content):
-            content = content()
         if isinstance(content, str):
             return content
 
@@ -753,16 +755,9 @@ class StreamService:
         events: list[dict[str, object]] = []
         for node_name, node_data in payload.items():
             normalized_node_name = str(node_name)
-            if node_data is None:
-                events.append(
-                    {
-                        "event_type": "node_completed",
-                        "node_name": normalized_node_name,
-                        "correlation_id": f"{normalized_node_name}-idle",
-                        "status": "done",
-                        "payload": {},
-                    }
-                )
+            if normalized_node_name in _INTERNAL_NODES:
+                continue
+            if not isinstance(node_data, dict):
                 continue
 
             for message in cls._extract_node_messages(node_data):

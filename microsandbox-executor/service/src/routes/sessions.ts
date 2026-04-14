@@ -27,6 +27,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
       const payload = createSessionSchema.parse(request.body ?? {});
       const sessionId = payload?.session_id ?? createSessionId();
       validateSessionId(sessionId);
+      request.log.info({ sessionId }, "creating session");
       const session = await services.metadata.createSession(sessionId);
       await services.storage.ensureSessionRoot(sessionId);
 
@@ -100,6 +101,15 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
         };
       });
 
+      request.log.info(
+        {
+          sessionId,
+          fileCount: payload.files.length,
+          filePaths: payload.file_paths
+        },
+        "uploaded session files"
+      );
+
       return reply.code(201).send(payload);
     } catch (error) {
       request.log.error({ err: error }, "file upload failed");
@@ -124,6 +134,15 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
         await services.metadata.touchSession(sessionId);
         return services.metadata.listFiles(sessionId);
       });
+
+      request.log.info(
+        {
+          sessionId,
+          fileCount: files.length,
+          filePaths: files.map((file) => file.path).slice(0, 20)
+        },
+        "listed session files"
+      );
 
       return reply.send({
         session_id: sessionId,
@@ -153,6 +172,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
     try {
       validateSessionId(sessionId);
       const relativePath = normalizeRelativePath(params["*"]);
+      request.log.info({ sessionId, path: relativePath }, "downloading session file");
       const file = await services.locks.runExclusive(sessionId, async () => {
         await services.metadata.getRequiredSession(sessionId);
         await services.metadata.touchSession(sessionId);
@@ -191,6 +211,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
 
     try {
       validateSessionId(sessionId);
+      request.log.info({ sessionId }, "deleting session");
       await services.locks.runExclusive(sessionId, async () => {
         const session = await services.metadata.getRequiredSession(sessionId);
 

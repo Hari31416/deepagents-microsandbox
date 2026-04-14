@@ -628,3 +628,71 @@ def test_stream_service_records_runtime_failures() -> None:
             "payload": {"detail": "model backend offline", "message_id": "msg-2"},
         },
     ]
+
+
+def test_stream_service_fails_when_graph_finishes_without_final_response() -> None:
+    StubSandboxBackend.next_upload_results = None
+    StubSandboxBackend.next_session_files = [{"path": "iris.csv", "size": 31, "content_type": "text/csv"}]
+    StubSandboxBackend.next_downloads = {}
+    thread_service = StubThreadService()
+    message_service = StubMessageService()
+    run_event_service = StubRunEventService()
+    run_service = StubRunService()
+    service = StreamService(
+        thread_service=thread_service,
+        file_service=StubFileService(),
+        message_service=message_service,
+        run_event_service=run_event_service,
+        run_service=run_service,
+        runtime_service=StubRuntimeService(
+            StubGraph(
+                parts=[
+                    {
+                        "type": "updates",
+                        "data": {
+                            "agent": {
+                                "messages": [
+                                    {
+                                        "type": "ai",
+                                        "id": "ai-1",
+                                        "content": "",
+                                        "tool_calls": [
+                                            {"id": "call-1", "name": "python", "args": {"code": "print(1)"}}
+                                        ],
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ]
+            )
+        ),
+        settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
+        sandbox_backend_factory=StubSandboxBackend,
+    )
+
+    async def consume_stream() -> str:
+        chunks: list[str] = []
+        async for chunk in service.stream_chat(
+            actor_user_id="user-1",
+            actor_role="user",
+            thread_id="thread-1",
+            message="Summarize the dataset",
+            selected_file_ids=["file-1"],
+        ):
+            chunks.append(chunk)
+        return "".join(chunks)
+
+    output = asyncio.run(consume_stream())
+
+    assert "event: error" in output
+    assert "Run ended before the agent produced a final response" in output
+    assert run_service.completed_runs == []
+    assert run_service.failed_runs == [
+        {
+            "run_id": "run-1",
+            "error_detail": "Run ended before the agent produced a final response",
+            "output_text": "",
+            "event_count": 2,
+        }
+    ]

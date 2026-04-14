@@ -21,13 +21,7 @@ export function extractStreamState(payload: unknown): StreamEnvelope {
       '__end__',
     ].includes(nodeName)
 
-    if (nodeData === null) {
-      activities = upsertActivity(activities, {
-        id: `${nodeName}-idle`,
-        kind: 'status',
-        state: 'done',
-        label: formatNodeLabel(nodeName),
-      })
+    if (!nodeData || typeof nodeData !== 'object') {
       continue
     }
 
@@ -405,15 +399,6 @@ export function mapRunEventToActivity(event: ThreadRunEvent): StreamActivity | n
       state: event.status === 'error' ? 'error' : 'done',
       label: `${event.name || 'Tool'} ${event.status === 'error' ? 'returned an error' : 'finished'}`,
       result: content,
-    }
-  }
-
-  if (event.event_type === 'node_completed') {
-    return {
-      id: event.correlation_id || event.event_id,
-      kind: 'status',
-      state: 'done',
-      label: formatNodeLabel(event.node_name || 'Node'),
     }
   }
 
