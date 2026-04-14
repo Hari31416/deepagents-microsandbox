@@ -11,6 +11,8 @@ The product-facing backend is the FastAPI app under [backend/app/api](/Users/har
 Current responsibilities:
 
 - thread creation and lookup
+- durable thread message history
+- normalized thread run event history
 - file upload/download presign endpoints
 - file metadata registration
 - backend-owned chat streaming from the in-process LangGraph runtime
@@ -165,6 +167,73 @@ Notes:
 
 - both uploads and artifacts are expected to appear here
 - use `purpose` to distinguish them
+
+### `GET /api/threads/{thread_id}/messages`
+
+Lists persisted chat history for the thread in chronological order.
+
+Response:
+
+```json
+{
+  "messages": [
+    {
+      "message_id": "5df47cc9-4ad0-4f6f-b35b-2c6d0ca221dd",
+      "thread_id": "4fa23b73-0d77-4b0f-a6d4-74f05c3f4f22",
+      "owner_id": "user-123",
+      "role": "assistant",
+      "content": "The dataset has four columns: sepal_length, sepal_width, petal_length, petal_width.",
+      "status": "completed",
+      "run_id": "2b991ddc-f76b-4065-b0bf-c69ffd0b16f2",
+      "created_at": "2026-04-14T07:10:01.000000+00:00",
+      "updated_at": "2026-04-14T07:10:04.000000+00:00"
+    }
+  ]
+}
+```
+
+Notes:
+
+- this is the canonical source for rebuilding chat history after refresh
+- `status` may be `streaming`, `completed`, or `failed`
+- `run_id` is present for assistant messages associated with a backend run
+
+### `GET /api/threads/{thread_id}/events`
+
+Lists normalized persisted run events for the thread. Use `run_id` as an optional query parameter to scope results to one run.
+
+Response:
+
+```json
+{
+  "events": [
+    {
+      "event_id": "0f3b1512-95a5-41cd-b2b7-775585974b65",
+      "run_id": "2b991ddc-f76b-4065-b0bf-c69ffd0b16f2",
+      "thread_id": "4fa23b73-0d77-4b0f-a6d4-74f05c3f4f22",
+      "owner_id": "user-123",
+      "sequence": 3,
+      "event_type": "tool_call",
+      "name": "python",
+      "node_name": "agent",
+      "correlation_id": "call_abc123",
+      "status": "live",
+      "payload": {
+        "args": {
+          "code": "print(1)"
+        }
+      },
+      "created_at": "2026-04-14T07:10:02.000000+00:00"
+    }
+  ]
+}
+```
+
+Notes:
+
+- this is the canonical source for rebuilding live trace / tool history after refresh
+- current event types include `run_started`, `assistant_snapshot`, `tool_call`, `tool_result`, `node_completed`, `run_completed`, and `run_failed`
+- `correlation_id` is stable within a run and can be used to upsert activities in the UI
 
 ### `POST /api/files/presign-upload`
 

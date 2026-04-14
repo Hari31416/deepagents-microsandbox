@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 from app.agent.backend import MicrosandboxBackend
 from app.config import Settings
 from app.services.file_service import FileService
+from app.services.message_service import MessageService
+from app.services.run_event_service import RunEventService
 from app.services.run_service import RunService
 from app.services.runtime_service import RuntimeService
 from app.services.thread_service import ThreadService
@@ -33,6 +35,8 @@ class StreamService:
         self,
         thread_service: ThreadService,
         file_service: FileService,
+        message_service: MessageService,
+        run_event_service: RunEventService,
         run_service: RunService,
         runtime_service: RuntimeService,
         settings: Settings,
@@ -40,6 +44,8 @@ class StreamService:
     ) -> None:
         self._thread_service = thread_service
         self._file_service = file_service
+        self._message_service = message_service
+        self._run_event_service = run_event_service
         self._run_service = run_service
         self._runtime_service = runtime_service
         self._settings = settings
@@ -56,6 +62,15 @@ class StreamService:
             yield _sse("error", {"detail": "Thread not found"})
             return
 
+        user_message = self._message_service.create_message(
+            thread_id=thread_id,
+            owner_id=owner_id,
+            role="user",
+            content=message,
+            status="completed",
+        )
+        assistant_message_id: str | None = None
+
         try:
             workspace_files = self._resolve_workspace_files(
                 owner_id=owner_id,
@@ -68,6 +83,14 @@ class StreamService:
                 workspace_files=workspace_files,
             )
         except Exception as exc:
+            assistant_message = self._message_service.create_message(
+                thread_id=thread_id,
+                owner_id=owner_id,
+                role="assistant",
+                content=str(exc),
+                status="failed",
+            )
+            assistant_message_id = str(assistant_message["message_id"])
             yield _sse("error", {"detail": str(exc)})
             return
 
@@ -82,14 +105,50 @@ class StreamService:
             workspace_files=workspace_paths,
         )
         self._run_service.mark_running(run_id=str(run["run_id"]))
+        assistant_message = self._message_service.create_message(
+            thread_id=thread_id,
+            owner_id=owner_id,
+            role="assistant",
+            content="",
+            status="streaming",
+            run_id=str(run["run_id"]),
+        )
+        assistant_message_id = str(assistant_message["message_id"])
 
         event_count = 0
-        content_parts: list[str] = []
+        delta_response_content = ""
+        updated_response_content: str | None = None
+        latest_content_source: str | None = None
+        event_sequence = 0
 
         def next_event_id() -> str:
             nonlocal event_count
             event_count += 1
             return f"{run['run_id']}:{event_count}"
+
+        def record_run_event(
+            *,
+            event_type: str,
+            name: str | None = None,
+            node_name: str | None = None,
+            correlation_id: str | None = None,
+            status: str | None = None,
+            payload: dict[str, object] | None = None,
+        ) -> None:
+            nonlocal event_sequence
+            event_sequence += 1
+            self._run_event_service.create_event(
+                run_id=str(run["run_id"]),
+                thread_id=thread_id,
+                owner_id=owner_id,
+                sequence=event_sequence,
+                event_type=event_type,
+                name=name,
+                node_name=node_name,
+                correlation_id=correlation_id,
+                status=status,
+                payload=payload or {},
+            )
 
         yield _sse(
             "metadata",
@@ -97,8 +156,19 @@ class StreamService:
                 "run_id": run["run_id"],
                 "thread_id": thread_id,
                 "status": "running",
+                "message_id": assistant_message_id,
+                "user_message_id": user_message["message_id"],
             },
             event_id=next_event_id(),
+        )
+        record_run_event(
+            event_type="run_started",
+            correlation_id=str(run["run_id"]),
+            status="running",
+            payload={
+                "message_id": str(assistant_message_id),
+                "user_message_id": str(user_message["message_id"]),
+            },
         )
 
         try:
@@ -115,7 +185,15 @@ class StreamService:
                         if event["event"] == "delta":
                             delta = str(event["data"].get("delta", ""))
                             if delta:
-                                content_parts.append(delta)
+                                delta_response_content = f"{delta_response_content}{delta}"
+                                latest_content_source = "delta"
+                        elif event["event"] == "updates":
+                            updated_content = self._extract_content_from_updates(event["data"])
+                            if updated_content is not None:
+                                updated_response_content = updated_content
+                                latest_content_source = "updates"
+                            for update_event in self._extract_update_events(event["data"]):
+                                record_run_event(**update_event)
 
                         yield _sse(
                             event["event"],
@@ -123,10 +201,28 @@ class StreamService:
                             event_id=next_event_id(),
                         )
 
+                final_response_content = self._final_response_content(
+                    delta_response_content=delta_response_content,
+                    updated_response_content=updated_response_content,
+                    latest_content_source=latest_content_source,
+                )
                 self._run_service.complete_run(
                     run_id=str(run["run_id"]),
-                    output_text="".join(content_parts),
+                    output_text=final_response_content,
                     event_count=event_count,
+                )
+                if assistant_message_id is not None:
+                    self._message_service.update_message(
+                        message_id=assistant_message_id,
+                        content=final_response_content,
+                        status="completed",
+                        run_id=str(run["run_id"]),
+                    )
+                record_run_event(
+                    event_type="run_completed",
+                    correlation_id=str(run["run_id"]),
+                    status="completed",
+                    payload={"message_id": str(assistant_message_id)},
                 )
                 yield _sse(
                     "done",
@@ -134,26 +230,77 @@ class StreamService:
                         "run_id": run["run_id"],
                         "thread_id": thread_id,
                         "status": "completed",
+                        "message_id": assistant_message_id,
                     },
                     event_id=next_event_id(),
                 )
         except TimeoutError:
             detail = f"Run exceeded {self._settings.agent_run_timeout_seconds} seconds"
+            final_response_content = self._final_response_content(
+                delta_response_content=delta_response_content,
+                updated_response_content=updated_response_content,
+                latest_content_source=latest_content_source,
+            )
             self._run_service.fail_run(
                 run_id=str(run["run_id"]),
                 error_detail=detail,
-                output_text="".join(content_parts),
+                output_text=final_response_content,
                 event_count=event_count,
+            )
+            persisted_error = self._build_persisted_error_content(
+                current_response_content=final_response_content,
+                detail=detail,
+            )
+            if assistant_message_id is not None:
+                self._message_service.update_message(
+                    message_id=assistant_message_id,
+                    content=persisted_error,
+                    status="failed",
+                    run_id=str(run["run_id"]),
+                )
+            record_run_event(
+                event_type="run_failed",
+                correlation_id=str(run["run_id"]),
+                status="failed",
+                payload={
+                    "detail": detail,
+                    "message_id": str(assistant_message_id),
+                },
             )
             yield _sse("error", {"detail": detail, "run_id": run["run_id"]}, event_id=next_event_id())
         except Exception as exc:
             logger.exception("Run %s failed for thread %s", run["run_id"], thread_id)
             detail = self._normalize_runtime_error(exc)
+            final_response_content = self._final_response_content(
+                delta_response_content=delta_response_content,
+                updated_response_content=updated_response_content,
+                latest_content_source=latest_content_source,
+            )
             self._run_service.fail_run(
                 run_id=str(run["run_id"]),
                 error_detail=detail,
-                output_text="".join(content_parts),
+                output_text=final_response_content,
                 event_count=event_count,
+            )
+            persisted_error = self._build_persisted_error_content(
+                current_response_content=final_response_content,
+                detail=detail,
+            )
+            if assistant_message_id is not None:
+                self._message_service.update_message(
+                    message_id=assistant_message_id,
+                    content=persisted_error,
+                    status="failed",
+                    run_id=str(run["run_id"]),
+                )
+            record_run_event(
+                event_type="run_failed",
+                correlation_id=str(run["run_id"]),
+                status="failed",
+                payload={
+                    "detail": detail,
+                    "message_id": str(assistant_message_id),
+                },
             )
             yield _sse("error", {"detail": detail, "run_id": run["run_id"]}, event_id=next_event_id())
 
@@ -311,6 +458,141 @@ class StreamService:
     def _normalize_runtime_error(exc: Exception) -> str:
         detail = str(exc).strip()
         return detail or exc.__class__.__name__
+
+    @classmethod
+    def _extract_content_from_updates(cls, payload: object) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+
+        for node_data in payload.values():
+            messages = cls._extract_node_messages(node_data)
+            for message in messages:
+                if message.get("type") not in {"ai", "assistant"} and message.get("role") != "assistant":
+                    continue
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content
+        return None
+
+    @classmethod
+    def _extract_node_messages(cls, node_data: object) -> list[dict[str, Any]]:
+        if not isinstance(node_data, dict):
+            return []
+
+        messages = node_data.get("messages", node_data.get("value"))
+        if isinstance(messages, list):
+            return [message for message in messages if isinstance(message, dict)]
+        if isinstance(messages, dict):
+            nested_value = messages.get("value")
+            if isinstance(nested_value, list):
+                return [message for message in nested_value if isinstance(message, dict)]
+            if isinstance(nested_value, dict):
+                return [nested_value]
+            return [messages]
+        value = node_data.get("value")
+        if isinstance(value, list):
+            return [message for message in value if isinstance(message, dict)]
+        return []
+
+    @staticmethod
+    def _build_persisted_error_content(
+        *,
+        current_response_content: str,
+        detail: str,
+    ) -> str:
+        if current_response_content:
+            return f"{current_response_content}\n\n{detail}"
+        return detail
+
+    @staticmethod
+    def _final_response_content(
+        *,
+        delta_response_content: str,
+        updated_response_content: str | None,
+        latest_content_source: str | None,
+    ) -> str:
+        if latest_content_source == "updates" and updated_response_content is not None:
+            return updated_response_content
+        if latest_content_source == "delta" and delta_response_content:
+            return delta_response_content
+        if updated_response_content is not None:
+            return updated_response_content
+        return delta_response_content
+
+    @classmethod
+    def _extract_update_events(cls, payload: object) -> list[dict[str, object]]:
+        if not isinstance(payload, dict):
+            return []
+
+        events: list[dict[str, object]] = []
+        for node_name, node_data in payload.items():
+            normalized_node_name = str(node_name)
+            if node_data is None:
+                events.append(
+                    {
+                        "event_type": "node_completed",
+                        "node_name": normalized_node_name,
+                        "correlation_id": f"{normalized_node_name}-idle",
+                        "status": "done",
+                        "payload": {},
+                    }
+                )
+                continue
+
+            for message in cls._extract_node_messages(node_data):
+                message_role = str(message.get("role") or message.get("type") or "")
+                if message_role in {"assistant", "ai"}:
+                    content = message.get("content")
+                    if isinstance(content, str) and content.strip():
+                        events.append(
+                            {
+                                "event_type": "assistant_snapshot",
+                                "node_name": normalized_node_name,
+                                "correlation_id": str(message.get("id") or f"{normalized_node_name}-assistant"),
+                                "status": "done",
+                                "payload": {"content": content},
+                            }
+                        )
+                    tool_calls = message.get("tool_calls")
+                    if isinstance(tool_calls, list):
+                        for tool_call in tool_calls:
+                            if not isinstance(tool_call, dict):
+                                continue
+                            tool_name = tool_call.get("name")
+                            events.append(
+                                {
+                                    "event_type": "tool_call",
+                                    "name": str(tool_name) if tool_name else None,
+                                    "node_name": normalized_node_name,
+                                    "correlation_id": str(
+                                        tool_call.get("id") or f"{normalized_node_name}-{tool_name or 'tool'}"
+                                    ),
+                                    "status": "live",
+                                    "payload": {"args": cls._serialize_payload(tool_call.get("args"))},
+                                }
+                            )
+
+                if message_role == "tool":
+                    tool_status = str(message.get("status") or "success")
+                    tool_name = message.get("name")
+                    tool_content = message.get("content")
+                    serialized_content = cls._serialize_payload(tool_content)
+                    if not isinstance(serialized_content, str):
+                        serialized_content = json.dumps(serialized_content)
+                    events.append(
+                        {
+                            "event_type": "tool_result",
+                            "name": str(tool_name) if tool_name else None,
+                            "node_name": normalized_node_name,
+                            "correlation_id": str(
+                                message.get("tool_call_id") or message.get("id") or f"{normalized_node_name}-{tool_name or 'tool'}"
+                            ),
+                            "status": "done" if tool_status == "success" else "error",
+                            "payload": {"content": serialized_content, "tool_status": tool_status},
+                        }
+                    )
+
+        return events
 
     @classmethod
     def _serialize_payload(cls, value: Any) -> Any:

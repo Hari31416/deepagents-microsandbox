@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import asc, desc, select
 from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Thread, ThreadFile, ThreadRun, ThreadSandboxSession, User
+from app.db.models import Thread, ThreadFile, ThreadMessage, ThreadRun, ThreadRunEvent, ThreadSandboxSession, User
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,35 @@ class ThreadRunRecord:
     started_at: datetime | None
     completed_at: datetime | None
     last_event_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ThreadMessageRecord:
+    message_id: str
+    thread_id: str
+    owner_id: str
+    role: str
+    content: str
+    status: str
+    run_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ThreadRunEventRecord:
+    event_id: str
+    run_id: str
+    thread_id: str
+    owner_id: str
+    sequence: int
+    event_type: str
+    name: str | None
+    node_name: str | None
+    correlation_id: str | None
+    status: str | None
+    payload: dict[str, object]
+    created_at: datetime
 
 
 class ThreadRepository:
@@ -308,4 +337,162 @@ class ThreadRunRepository:
             started_at=record.started_at,
             completed_at=record.completed_at,
             last_event_at=record.last_event_at,
+        )
+
+
+class ThreadMessageRepository:
+    def __init__(self, session_factory: sessionmaker) -> None:
+        self._session_factory = session_factory
+
+    def create_message(
+        self,
+        *,
+        thread_id: str,
+        owner_id: str,
+        role: str,
+        content: str,
+        status: str,
+        run_id: str | None = None,
+    ) -> ThreadMessageRecord:
+        with self._session_factory() as session:
+            record = ThreadMessage(
+                thread_id=thread_id,
+                owner_id=owner_id,
+                role=role,
+                content=content,
+                status=status,
+                run_id=run_id,
+            )
+            session.add(record)
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def update_message(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        status: str,
+        run_id: str | None = None,
+    ) -> ThreadMessageRecord:
+        with self._session_factory() as session:
+            record = session.get(ThreadMessage, message_id)
+            if record is None:
+                raise ValueError("Message not found")
+            record.content = content
+            record.status = status
+            record.run_id = run_id
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def list_messages(self, *, owner_id: str, thread_id: str) -> list[ThreadMessageRecord]:
+        with self._session_factory() as session:
+            statement = (
+                select(ThreadMessage)
+                .where(ThreadMessage.owner_id == owner_id, ThreadMessage.thread_id == thread_id)
+                .order_by(asc(ThreadMessage.created_at), asc(ThreadMessage.id))
+            )
+            return [self._to_record(record) for record in session.scalars(statement)]
+
+    def get_message(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        message_id: str,
+    ) -> ThreadMessageRecord | None:
+        with self._session_factory() as session:
+            statement = select(ThreadMessage).where(
+                ThreadMessage.id == message_id,
+                ThreadMessage.owner_id == owner_id,
+                ThreadMessage.thread_id == thread_id,
+            )
+            record = session.scalar(statement)
+            return None if record is None else self._to_record(record)
+
+    @staticmethod
+    def _to_record(record: ThreadMessage) -> ThreadMessageRecord:
+        return ThreadMessageRecord(
+            message_id=record.id,
+            thread_id=record.thread_id,
+            owner_id=record.owner_id,
+            role=record.role,
+            content=record.content,
+            status=record.status,
+            run_id=record.run_id,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class ThreadRunEventRepository:
+    def __init__(self, session_factory: sessionmaker) -> None:
+        self._session_factory = session_factory
+
+    def create_event(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        owner_id: str,
+        sequence: int,
+        event_type: str,
+        name: str | None,
+        node_name: str | None,
+        correlation_id: str | None,
+        status: str | None,
+        payload: dict[str, object],
+    ) -> ThreadRunEventRecord:
+        with self._session_factory() as session:
+            record = ThreadRunEvent(
+                run_id=run_id,
+                thread_id=thread_id,
+                owner_id=owner_id,
+                sequence=sequence,
+                event_type=event_type,
+                name=name,
+                node_name=node_name,
+                correlation_id=correlation_id,
+                status=status,
+                payload=payload,
+            )
+            session.add(record)
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def list_events(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        run_id: str | None = None,
+    ) -> list[ThreadRunEventRecord]:
+        with self._session_factory() as session:
+            statement = (
+                select(ThreadRunEvent)
+                .where(ThreadRunEvent.owner_id == owner_id, ThreadRunEvent.thread_id == thread_id)
+                .order_by(asc(ThreadRunEvent.created_at), asc(ThreadRunEvent.sequence), asc(ThreadRunEvent.id))
+            )
+            if run_id is not None:
+                statement = statement.where(ThreadRunEvent.run_id == run_id)
+            return [self._to_record(record) for record in session.scalars(statement)]
+
+    @staticmethod
+    def _to_record(record: ThreadRunEvent) -> ThreadRunEventRecord:
+        return ThreadRunEventRecord(
+            event_id=record.id,
+            run_id=record.run_id,
+            thread_id=record.thread_id,
+            owner_id=record.owner_id,
+            sequence=record.sequence,
+            event_type=record.event_type,
+            name=record.name,
+            node_name=record.node_name,
+            correlation_id=record.correlation_id,
+            status=record.status,
+            payload=dict(record.payload or {}),
+            created_at=record.created_at,
         )

@@ -54,6 +54,37 @@ async def list_thread_files(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.get("/{thread_id}/messages")
+async def list_thread_messages(
+    thread_id: str,
+    user: Annotated[UserContext, Depends(get_current_user)],
+):
+    services = get_services()
+    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return {"messages": services.message_service.list_messages(owner_id=user.user_id, thread_id=thread_id)}
+
+
+@router.get("/{thread_id}/events")
+async def list_thread_events(
+    thread_id: str,
+    user: Annotated[UserContext, Depends(get_current_user)],
+    run_id: str | None = None,
+):
+    services = get_services()
+    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return {
+        "events": services.run_event_service.list_events(
+            owner_id=user.user_id,
+            thread_id=thread_id,
+            run_id=run_id,
+        )
+    }
+
+
 @router.get("/{thread_id}/runs")
 async def list_thread_runs(
     thread_id: str,

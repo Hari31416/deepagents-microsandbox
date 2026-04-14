@@ -31,6 +31,33 @@ export interface ThreadFile {
   created_at: string
 }
 
+export interface ThreadMessage {
+  message_id: string
+  thread_id: string
+  owner_id: string
+  role: "user" | "assistant"
+  content: string
+  status: "streaming" | "completed" | "failed"
+  run_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ThreadRunEvent {
+  event_id: string
+  run_id: string
+  thread_id: string
+  owner_id: string
+  sequence: number
+  event_type: string
+  name?: string | null
+  node_name?: string | null
+  correlation_id?: string | null
+  status?: string | null
+  payload: Record<string, unknown>
+  created_at: string
+}
+
 export interface PresignedUpload {
   file_id: string
   thread_id: string
@@ -54,6 +81,9 @@ export const threadsApi = {
   list: () => apiClient.get<{ threads: Thread[] }>("/threads").then((r) => r.data),
   create: (title?: string) => apiClient.post<Thread>("/threads", { title }).then((r) => r.data),
   get: (id: string) => apiClient.get<Thread>(`/threads/${id}`).then((r) => r.data),
+  getMessages: (id: string) => apiClient.get<{ messages: ThreadMessage[] }>(`/threads/${id}/messages`).then((r) => r.data),
+  getEvents: (id: string, params?: { run_id?: string }) =>
+    apiClient.get<{ events: ThreadRunEvent[] }>(`/threads/${id}/events`, { params }).then((r) => r.data),
   getFiles: (id: string) => apiClient.get<{ files: ThreadFile[] }>(`/threads/${id}/files`).then((r) => r.data),
 }
 

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { ChatInput } from "./chat-input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useStore } from "@/store/use-store"
-import { streamChat } from "@/lib/api-client"
+import { streamChat, threadsApi, type ThreadMessage, type ThreadRunEvent } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
 import {
   Bot,
@@ -47,6 +47,7 @@ export function ChatArea() {
   const { activeThreadId, threads } = useStore()
   const [messages, setMessages] = useState<Record<string, Message[]>>({})
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isHydratingHistory, setIsHydratingHistory] = useState(false)
   const activeMessages = activeThreadId ? messages[activeThreadId] || [] : []
   const activeThread = threads.find((thread) => thread.thread_id === activeThreadId)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -54,6 +55,44 @@ export function ChatArea() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [activeMessages])
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      return
+    }
+
+    let isCancelled = false
+    setIsHydratingHistory(true)
+
+    Promise.all([
+      threadsApi.getMessages(activeThreadId),
+      threadsApi.getEvents(activeThreadId),
+    ])
+      .then(([messageData, eventData]) => {
+        if (isCancelled) {
+          return
+        }
+        const activitiesByRun = buildActivitiesByRun(eventData.events)
+        setMessages((prev) => ({
+          ...prev,
+          [activeThreadId]: messageData.messages.map((message) => mapPersistedMessage(message, activitiesByRun)),
+        }))
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          console.error("Failed to fetch thread history:", error)
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsHydratingHistory(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [activeThreadId])
 
   const updateAssistantMessage = (
     threadId: string,
@@ -282,7 +321,7 @@ export function ChatArea() {
       </ScrollArea>
 
       <div className="p-6 max-w-3xl mx-auto w-full sticky bottom-0">
-        <ChatInput onSend={handleSendMessage} disabled={isStreaming} />
+        <ChatInput onSend={handleSendMessage} disabled={isStreaming || isHydratingHistory} />
       </div>
     </div>
   )
@@ -561,4 +600,161 @@ function extractErrorMessage(data: unknown, rawData: string) {
   }
 
   return rawData || "Stream failed"
+}
+
+function mapPersistedMessage(
+  message: ThreadMessage,
+  activitiesByRun: Record<string, StreamActivity[]>,
+): Message {
+  return {
+    id: message.message_id,
+    role: message.role,
+    content: message.content,
+    isStreaming: message.status === "streaming",
+    runId: message.run_id || undefined,
+    activities: buildPersistedActivities(message, activitiesByRun),
+  }
+}
+
+function buildPersistedActivities(
+  message: ThreadMessage,
+  activitiesByRun: Record<string, StreamActivity[]>,
+): StreamActivity[] {
+  if (message.role !== "assistant") {
+    return []
+  }
+
+  if (message.run_id && activitiesByRun[message.run_id]?.length) {
+    return activitiesByRun[message.run_id]
+  }
+
+  if (message.status === "failed") {
+    return [
+      {
+        id: message.run_id || message.message_id,
+        kind: "error",
+        state: "error",
+        label: "Run failed",
+        detail: previewText(message.content),
+      },
+    ]
+  }
+
+  if (message.status === "completed" && message.run_id) {
+    return [
+      {
+        id: message.run_id,
+        kind: "status",
+        state: "done",
+        label: "Run completed",
+      },
+    ]
+  }
+
+  return []
+}
+
+function buildActivitiesByRun(events: ThreadRunEvent[]): Record<string, StreamActivity[]> {
+  const eventsByRun = new Map<string, ThreadRunEvent[]>()
+
+  for (const event of events) {
+    const runEvents = eventsByRun.get(event.run_id) || []
+    runEvents.push(event)
+    eventsByRun.set(event.run_id, runEvents)
+  }
+
+  const activitiesByRun: Record<string, StreamActivity[]> = {}
+
+  for (const [runId, runEvents] of eventsByRun.entries()) {
+    let activities: StreamActivity[] = []
+    for (const event of runEvents) {
+      const activity = mapRunEventToActivity(event)
+      if (!activity) {
+        continue
+      }
+      activities = upsertActivity(activities, activity)
+    }
+    activitiesByRun[runId] = activities
+  }
+
+  return activitiesByRun
+}
+
+function mapRunEventToActivity(event: ThreadRunEvent): StreamActivity | null {
+  if (event.event_type === "run_started") {
+    return {
+      id: `${event.run_id}-started`,
+      kind: "metadata",
+      state: "live",
+      label: "Run started",
+      detail: `Run ID ${truncateMiddle(event.run_id, 18)}`,
+    }
+  }
+
+  if (event.event_type === "assistant_snapshot") {
+    const content = typeof event.payload.content === "string" ? event.payload.content : ""
+    if (!content.trim()) {
+      return null
+    }
+    return {
+      id: event.correlation_id || event.event_id,
+      kind: "status",
+      state: "done",
+      label: "Draft response updated",
+      detail: previewText(content),
+    }
+  }
+
+  if (event.event_type === "tool_call") {
+    return {
+      id: event.correlation_id || event.event_id,
+      kind: "tool_call",
+      state: event.status === "error" ? "error" : "live",
+      label: `Running ${event.name || "tool"}`,
+      detail: summarizeArgs(event.payload.args),
+    }
+  }
+
+  if (event.event_type === "tool_result") {
+    const content =
+      typeof event.payload.content === "string" ? event.payload.content : JSON.stringify(event.payload.content)
+    return {
+      id: event.correlation_id || event.event_id,
+      kind: "tool_result",
+      state: event.status === "error" ? "error" : "done",
+      label: `${event.name || "Tool"} ${event.status === "error" ? "returned an error" : "finished"}`,
+      detail: previewText(content),
+    }
+  }
+
+  if (event.event_type === "node_completed") {
+    return {
+      id: event.correlation_id || event.event_id,
+      kind: "status",
+      state: "done",
+      label: formatNodeLabel(event.node_name || "Node"),
+    }
+  }
+
+  if (event.event_type === "run_completed") {
+    return {
+      id: `${event.run_id}-completed`,
+      kind: "status",
+      state: "done",
+      label: "Run completed",
+    }
+  }
+
+  if (event.event_type === "run_failed") {
+    const detail = typeof event.payload.detail === "string" ? event.payload.detail : "Run failed"
+    return {
+      id: `${event.run_id}-failed`,
+      kind: "error",
+      state: "error",
+      label: "Run failed",
+      detail,
+    }
+  }
+
+  return null
 }

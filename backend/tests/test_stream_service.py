@@ -102,6 +102,33 @@ class StubRunService:
         return kwargs
 
 
+class StubMessageService:
+    def __init__(self) -> None:
+        self.created_messages: list[dict[str, object]] = []
+        self.updated_messages: list[dict[str, object]] = []
+
+    def create_message(self, **kwargs):
+        message = {
+            "message_id": f"msg-{len(self.created_messages) + 1}",
+            **kwargs,
+        }
+        self.created_messages.append(message)
+        return message
+
+    def update_message(self, **kwargs):
+        self.updated_messages.append(kwargs)
+        return kwargs
+
+
+class StubRunEventService:
+    def __init__(self) -> None:
+        self.created_events: list[dict[str, object]] = []
+
+    def create_event(self, **kwargs):
+        self.created_events.append(kwargs)
+        return kwargs
+
+
 class StubMessageChunk:
     def __init__(self, text: str) -> None:
         self.text = text
@@ -140,6 +167,8 @@ class StubRuntimeService:
 
 def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     file_service = StubFileService()
+    message_service = StubMessageService()
+    run_event_service = StubRunEventService()
     run_service = StubRunService()
     graph = StubGraph(
         parts=[
@@ -148,7 +177,20 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
                 "data": {
                     "agent": {
                         "messages": [
-                            {"type": "ai", "content": "Inspecting iris.csv"},
+                            {
+                                "type": "ai",
+                                "id": "ai-1",
+                                "content": "Inspecting iris.csv",
+                                "tool_calls": [{"id": "call-1", "name": "python", "args": {"code": "print(1)"}}],
+                            },
+                            {
+                                "type": "tool",
+                                "id": "tool-1",
+                                "tool_call_id": "call-1",
+                                "name": "python",
+                                "status": "success",
+                                "content": "1",
+                            },
                         ]
                     }
                 },
@@ -164,6 +206,8 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     service = StreamService(
         thread_service=StubThreadService(),
         file_service=file_service,
+        message_service=message_service,
+        run_event_service=run_event_service,
         run_service=run_service,
         runtime_service=StubRuntimeService(graph),
         settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
@@ -219,6 +263,95 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
         }
     ]
     assert run_service.failed_runs == []
+    assert message_service.created_messages == [
+        {
+            "message_id": "msg-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "role": "user",
+            "content": "What columns are in the file?",
+            "status": "completed",
+        },
+        {
+            "message_id": "msg-2",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "role": "assistant",
+            "content": "",
+            "status": "streaming",
+            "run_id": "run-1",
+        },
+    ]
+    assert message_service.updated_messages == [
+        {
+            "message_id": "msg-2",
+            "content": "hello",
+            "status": "completed",
+            "run_id": "run-1",
+        }
+    ]
+    assert run_event_service.created_events == [
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 1,
+            "event_type": "run_started",
+            "name": None,
+            "node_name": None,
+            "correlation_id": "run-1",
+            "status": "running",
+            "payload": {"message_id": "msg-2", "user_message_id": "msg-1"},
+        },
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 2,
+            "event_type": "assistant_snapshot",
+            "name": None,
+            "node_name": "agent",
+            "correlation_id": "ai-1",
+            "status": "done",
+            "payload": {"content": "Inspecting iris.csv"},
+        },
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 3,
+            "event_type": "tool_call",
+            "name": "python",
+            "node_name": "agent",
+            "correlation_id": "call-1",
+            "status": "live",
+            "payload": {"args": {"code": "print(1)"}},
+        },
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 4,
+            "event_type": "tool_result",
+            "name": "python",
+            "node_name": "agent",
+            "correlation_id": "call-1",
+            "status": "done",
+            "payload": {"content": "1", "tool_status": "success"},
+        },
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 5,
+            "event_type": "run_completed",
+            "name": None,
+            "node_name": None,
+            "correlation_id": "run-1",
+            "status": "completed",
+            "payload": {"message_id": "msg-2"},
+        },
+    ]
     assert graph.calls == [
         {
             "payload": {
@@ -255,10 +388,14 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     StubSandboxBackend.next_upload_results = [
         FileUploadResponse(path="iris.csv", error="permission_denied")
     ]
+    message_service = StubMessageService()
+    run_event_service = StubRunEventService()
     run_service = StubRunService()
     service = StreamService(
         thread_service=StubThreadService(),
         file_service=file_service,
+        message_service=message_service,
+        run_event_service=run_event_service,
         run_service=run_service,
         runtime_service=StubRuntimeService(StubGraph()),
         settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
@@ -281,14 +418,38 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     assert "event: error" in output
     assert "Failed to stage files in sandbox: iris.csv: permission_denied" in output
     assert run_service.created_runs == []
+    assert message_service.created_messages == [
+        {
+            "message_id": "msg-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "role": "user",
+            "content": "Summarize the dataset",
+            "status": "completed",
+        },
+        {
+            "message_id": "msg-2",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "role": "assistant",
+            "content": "Failed to stage files in sandbox: iris.csv: permission_denied",
+            "status": "failed",
+        },
+    ]
+    assert message_service.updated_messages == []
+    assert run_event_service.created_events == []
 
 
 def test_stream_service_records_runtime_failures() -> None:
     StubSandboxBackend.next_upload_results = None
+    message_service = StubMessageService()
+    run_event_service = StubRunEventService()
     run_service = StubRunService()
     service = StreamService(
         thread_service=StubThreadService(),
         file_service=StubFileService(),
+        message_service=message_service,
+        run_event_service=run_event_service,
         run_service=run_service,
         runtime_service=StubRuntimeService(StubGraph(error=RuntimeError("model backend offline"))),
         settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
@@ -317,4 +478,38 @@ def test_stream_service_records_runtime_failures() -> None:
             "output_text": "",
             "event_count": 1,
         }
+    ]
+    assert message_service.updated_messages == [
+        {
+            "message_id": "msg-2",
+            "content": "model backend offline",
+            "status": "failed",
+            "run_id": "run-1",
+        }
+    ]
+    assert run_event_service.created_events == [
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 1,
+            "event_type": "run_started",
+            "name": None,
+            "node_name": None,
+            "correlation_id": "run-1",
+            "status": "running",
+            "payload": {"message_id": "msg-2", "user_message_id": "msg-1"},
+        },
+        {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "sequence": 2,
+            "event_type": "run_failed",
+            "name": None,
+            "node_name": None,
+            "correlation_id": "run-1",
+            "status": "failed",
+            "payload": {"detail": "model backend offline", "message_id": "msg-2"},
+        },
     ]

@@ -11,6 +11,7 @@ The backend now owns agent execution directly instead of proxying to an external
 - `/api/chat/stream` now runs the LangGraph app in-process and emits backend-owned SSE.
 - PostgreSQL-backed LangGraph checkpoints are enabled automatically whenever the backend is configured against Postgres.
 - Thread runs are stored in `thread_runs` with lifecycle status, selected files, staged workspace files, timestamps, output text, and failure detail.
+- Thread messages are stored in `thread_messages`, and normalized live-trace events are stored in `thread_run_events`.
 - The root `just` workflow no longer starts or stops a separate LangGraph container/runtime process.
 
 ## Operational Notes

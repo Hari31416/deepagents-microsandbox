@@ -25,6 +25,14 @@ def test_create_and_get_thread() -> None:
     assert get_response.status_code == 200
     assert get_response.json()["title"] == "First thread"
 
+    messages_response = client.get(f"/api/threads/{thread_id}/messages")
+    assert messages_response.status_code == 200
+    assert messages_response.json() == {"messages": []}
+
+    events_response = client.get(f"/api/threads/{thread_id}/events")
+    assert events_response.status_code == 200
+    assert events_response.json() == {"events": []}
+
     runs_response = client.get(f"/api/threads/{thread_id}/runs")
     assert runs_response.status_code == 200
     assert runs_response.json() == {"runs": []}
