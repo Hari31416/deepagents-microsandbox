@@ -288,6 +288,7 @@ export function mapPersistedMessage(message: ThreadMessage, activitiesByRun: Rec
     id: message.message_id,
     role: message.role,
     content: message.content,
+    createdAt: message.created_at,
     isStreaming: message.status === 'streaming',
     runId: message.run_id || undefined,
     activities: buildPersistedActivities(message, activitiesByRun),

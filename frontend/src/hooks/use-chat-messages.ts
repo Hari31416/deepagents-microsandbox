@@ -84,6 +84,7 @@ export function useChatMessages(activeThreadId: string | null) {
       id: Math.random().toString(36).substring(7),
       role: 'user',
       content,
+      createdAt: new Date().toISOString(),
     }
     const assistantMsgId = Math.random().toString(36).substring(7)
     const assistantMsg: Message = {
@@ -107,7 +108,16 @@ export function useChatMessages(activeThreadId: string | null) {
         selected_file_ids: fileIds,
       })
 
+      let hasStartedResponding = false
+
       for await (const event of stream) {
+        if (!hasStartedResponding) {
+          hasStartedResponding = true
+          updateAssistantMessage(threadId, assistantMsgId, () => ({
+            createdAt: new Date().toISOString(),
+          }))
+        }
+
         if (event.event === 'metadata') {
           const runId = typeof event.data === 'object' && event.data ? String(event.data.run_id || '') : ''
           updateAssistantMessage(threadId, assistantMsgId, (message) => ({

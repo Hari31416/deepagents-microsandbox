@@ -34,7 +34,7 @@ export function ChatArea() {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50/30 dark:bg-black/20 relative">
-      <header className="h-16 border-b border-border/50 bg-background/60 backdrop-blur-xl px-8 flex items-center justify-between sticky top-0 z-20">
+      <header className="h-16 border-b border-border/50 bg-background/60 backdrop-blur-xl px-6 flex items-center justify-between sticky top-0 z-20">
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-bold tracking-tight truncate">{activeThread?.title || 'Untitled Conversation'}</h2>
@@ -55,7 +55,7 @@ export function ChatArea() {
       </header>
 
       <ScrollArea className="flex-1 h-full">
-        <div className="max-w-4xl mx-auto py-10 px-8 space-y-12 pb-32">
+        <div className="max-w-5xl mx-auto py-10 px-6 space-y-12 pb-32">
           {activeMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-32 text-center space-y-6">
               <div className="relative">
@@ -84,7 +84,7 @@ export function ChatArea() {
 
       <div className="w-full bg-background border-t border-border/50 sticky bottom-0 z-20">
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/90 to-transparent -top-20 pointer-events-none" />
-        <div className="max-w-4xl mx-auto w-full relative px-6 py-4 space-y-4">
+        <div className="max-w-5xl mx-auto w-full relative px-6 py-4 space-y-4">
           {getLatestTodos(activeMessages).length > 0 && <IntegratedTodoPanel todos={getLatestTodos(activeMessages)} />}
           <ChatInput onSend={handleSendMessage} disabled={isStreaming || isHydratingHistory} />
         </div>

@@ -5,6 +5,8 @@ import { type Message } from '../../types/chat'
 import { MarkdownRenderer } from './markdown-renderer'
 import { LiveTrace } from './live-trace'
 
+import { format } from 'date-fns'
+
 interface MessageItemProps {
   message: Message
   idx: number
@@ -35,6 +37,11 @@ export function MessageItem({ message, idx }: MessageItemProps) {
           )}
         >
           {message.role === 'assistant' ? 'Agent' : 'You'}
+          {message.createdAt && (
+            <span className="text-[9px] font-medium text-slate-400 normal-case tracking-normal ml-1">
+              • {format(new Date(message.createdAt), 'HH:mm:ss')}
+            </span>
+          )}
           <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800/50" />
         </div>
 

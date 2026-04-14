@@ -17,6 +17,7 @@ export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  createdAt?: string
   isStreaming?: boolean
   runId?: string
   activities?: StreamActivity[]
