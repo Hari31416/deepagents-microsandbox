@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_INTERNAL_NODES: frozenset[str] = frozenset(
+    {"write_todos", "task", "plan", "orchestrator", "planner", "tools", "__start__", "__end__"}
+)
+
+
 def _sse(event: str, data: dict[str, object], *, event_id: str | None = None) -> str:
     lines: list[str] = []
     if event_id:
@@ -367,9 +372,11 @@ class StreamService:
                 continue
 
             message_chunk = chunk_payload[0]
+            metadata = chunk_payload[1]
+            node_name = metadata.get("langgraph_node", "")
             delta = self._extract_message_text(message_chunk)
             if delta:
-                yield {"event": "delta", "data": {"delta": delta}}
+                yield {"event": "delta", "data": {"delta": delta, "node_name": node_name}}
 
     def _build_input_message(
         self,
@@ -478,10 +485,16 @@ class StreamService:
         if not isinstance(payload, dict):
             return None
 
-        for node_data in payload.values():
+        for node_name, node_data in payload.items():
+            if node_name in _INTERNAL_NODES:
+                continue
+
             messages = cls._extract_node_messages(node_data)
             for message in messages:
                 if message.get("type") not in {"ai", "assistant"} and message.get("role") != "assistant":
+                    continue
+                # Skip planning steps / tool calls
+                if message.get("tool_calls"):
                     continue
                 content = message.get("content")
                 if isinstance(content, str) and content.strip():

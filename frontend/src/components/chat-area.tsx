@@ -187,13 +187,9 @@ export function ChatArea() {
             
             // Only update content if we don't have a streaming delta version
             // or if the update provides a significantly cleaner/final version
-            // Heuristic: check if updateContent looks like raw tool output or internal state updates
             let nextContent = currentContent
-            if (updateContent && (!currentContent || updateContent.length > currentContent.length)) {
-              const looksLikeRawData = /^[\[\{]|CUST_ID|BALANCE|original_filename|Updated todo list to/.test(updateContent)
-              if (!looksLikeRawData) {
-                nextContent = updateContent
-              }
+            if (updateContent) {
+              nextContent = updateContent
             }
 
             return {
@@ -209,9 +205,10 @@ export function ChatArea() {
           const delta = deltaData?.delta || ""
           const metadata = deltaData?.metadata || {}
 
-          // Hide deltas that come from internal nodes or non-assistant roles
-          const node = metadata?.langgraph_node || ""
-          if (node === "tools" || node === "task" || node === "write_todos") {
+          // Hide deltas that come from internal nodes
+          const node = deltaData?.node_name || metadata?.langgraph_node || ""
+          const internalNodes = ["tools", "task", "write_todos", "planner", "orchestrator", "plan", "thought", "__start__", "__end__"]
+          if (internalNodes.includes(node)) {
             continue
           }
 
@@ -226,7 +223,7 @@ export function ChatArea() {
         if (event.event === "error") {
           const detail = extractErrorMessage(event.data, event.rawData)
           updateAssistantMessage(threadId, assistantMsgId, (message) => ({
-            content: message.content ? `${message.content}\n\n${detail}` : detail,
+            content: message.content ? `${message.content}\n\n{detail}` : detail,
             isStreaming: false,
             activities: upsertActivity(message.activities, {
               id: event.id || "stream-error",
@@ -315,10 +312,6 @@ export function ChatArea() {
           </Button>
         </div>
       </header>
-
-      {getLatestTodos(activeMessages).length > 0 && (
-        <StickyTodoPanel todos={getLatestTodos(activeMessages)} />
-      )}
 
       <ScrollArea className="flex-1 h-full">
         <div className="max-w-4xl mx-auto py-10 px-8 space-y-12">
@@ -410,7 +403,10 @@ export function ChatArea() {
 
       <div className="pb-10 pt-4 px-8 max-w-4xl mx-auto w-full sticky bottom-0 z-20">
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent -top-12 pointer-events-none" />
-        <div className="relative">
+        <div className="relative space-y-4">
+          {getLatestTodos(activeMessages).length > 0 && (
+            <IntegratedTodoPanel todos={getLatestTodos(activeMessages)} />
+          )}
           <ChatInput onSend={handleSendMessage} disabled={isStreaming || isHydratingHistory} />
         </div>
       </div>
@@ -426,157 +422,144 @@ function LiveTrace({
   runId?: string
   isStreaming: boolean
 }) {
-  const [isExpanded, setIsExpanded] = useState(true)
+  const [isExpanded, setIsExpanded] = useState(isStreaming)
 
   if (!runId && activities.length === 0 && !isStreaming) {
     return null
   }
 
-  // Hide "Draft response updated" activities to avoid duplication
-  const filteredActivities = activities.filter(a => a.label !== "Draft response updated")
+  // Hide internal noise
+  const filteredActivities = activities.filter(a =>
+    !["Draft response updated", "Plan updated", "Task"].includes(a.label)
+  )
 
   return (
-    <div className="group/trace relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm shadow-xl shadow-slate-200/50 dark:shadow-none transition-all">
+    <div className="group/trace relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md shadow-sm transition-all duration-300">
       <div 
-        className="flex items-center justify-between gap-4 px-5 py-3.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+        className="flex items-center justify-between gap-4 px-4 py-2.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className={cn(
-              "w-2 h-2 rounded-full",
-              isStreaming ? "bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-300 dark:bg-slate-600"
-            )} />
-            {isStreaming && (
-              <div className="absolute inset-0 bg-emerald-500/30 rounded-full animate-ping" />
+        <div className="flex items-center gap-2.5">
+          <div className="relative flex items-center justify-center">
+            {isStreaming ? (
+              <div className="h-4 w-4">
+                <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
+                <Loader2 className="h-4 w-4 animate-spin text-primary relative z-10" />
+              </div>
+            ) : (
+              <Terminal className="h-3.5 w-3.5 text-slate-400" />
             )}
           </div>
-          <span className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">
-            Internal Reasoning
+          <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
+            {isStreaming ? "Synthesizing Thought" : "Execution Trace"}
           </span>
-          {filteredActivities.length > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[9px] font-bold text-slate-400">
-              {filteredActivities.length}
-            </span>
-          )}
         </div>
-        <div className="flex items-center gap-4">
-          {runId && (
-            <span className="text-[10px] font-mono text-slate-400 bg-slate-100/50 dark:bg-slate-800/50 px-2 py-0.5 rounded border border-slate-200/50 dark:border-slate-700/50 hidden sm:inline-block">
-              {truncateMiddle(runId, 24)}
+        <div className="flex items-center gap-3">
+          {filteredActivities.length > 0 && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
+              {filteredActivities.length} Steps
             </span>
           )}
-          <div className={cn(
-            "p-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 transition-transform duration-300",
+          <ChevronDown className={cn(
+            "h-3.5 w-3.5 text-slate-400 transition-transform duration-300",
             isExpanded ? "rotate-0" : "-rotate-90"
-          )}>
-            <ChevronDown className="h-3.5 w-3.5" />
-          </div>
+          )} />
         </div>
       </div>
 
       <AnimatePresence>
         {isExpanded && (
           <motion.div
-            initial={{ height: 0 }}
-            animate={{ height: "auto" }}
-            exit={{ height: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden border-t border-slate-100 dark:border-slate-800/50"
+          >
+            <div className="p-3 bg-slate-50/50 dark:bg-slate-950/20 max-h-[400px] overflow-y-auto custom-scrollbar">
+              <div className="relative pl-2.5 border-l border-slate-200 dark:border-slate-800 ml-1.5 space-y-4 py-2">
+                {filteredActivities.length === 0 && isStreaming && (
+                  <div className="flex items-center gap-2 py-2 text-primary/60">
+                    <Radio className="h-3 w-3 animate-pulse" />
+                    <span className="text-[10px] font-medium animate-pulse">Initializing pipeline...</span>
+                  </div>
+                )}
+
+                {filteredActivities.map((activity, idx) => (
+                  <div key={activity.id} className="relative group/item">
+                    {/* Circle on timeline */}
+                    <div className={cn(
+                      "absolute -left-[14.5px] top-1.5 w-2 h-2 rounded-full border bg-background z-10 shadow-sm",
+                      activity.state === "live" ? "border-primary animate-pulse shadow-primary/20" :
+                        activity.state === "error" ? "border-rose-500" :
+                          activity.state === "done" ? "border-emerald-500 bg-emerald-500/10" : "border-slate-300 dark:border-slate-700"
+                    )} />
+
+                    <div className="pl-4 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "text-[11px] font-bold tracking-tight",
+                          activity.state === "error" ? "text-rose-500" : "text-slate-700 dark:text-slate-200"
+                        )}>
+                          {activity.label}
+                        </span>
+                        {activity.state === "live" && <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />}
+                      </div>
+
+                      {(activity.args || activity.result) && (
+                        <ActivityDetails activity={activity} />
+                      )}
+
+                      {activity.detail && !activity.args && !activity.result && (
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed max-w-lg">
+                          {activity.detail}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ActivityDetails({ activity }: { activity: StreamActivity }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const isCode = activity.kind === "tool_call" || activity.kind === "tool_result"
+
+  return (
+    <div className="space-y-1.5">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100/80 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-[9px] font-black uppercase tracking-wider text-slate-500"
+      >
+        {isCode ? (isOpen ? "Hide Payload" : "View Payload") : (isOpen ? "Collapse" : "Expand Details")}
+      </button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="p-4 pt-1 space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar bg-slate-50/30 dark:bg-slate-950/20 border-t border-slate-100 dark:border-slate-800/50">
-              {filteredActivities.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-6 text-slate-400 gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin opacity-50" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest animate-pulse">Syncing events...</span>
+            <div className="rounded-lg bg-slate-900 dark:bg-black p-3 text-[10px] font-mono leading-relaxed text-slate-300 border border-slate-800/50 shadow-inner overflow-x-auto max-h-60 overflow-y-auto custom-scrollbar">
+              {activity.args && (
+                <div className="space-y-2">
+                  <div className="text-[8px] text-slate-500 font-bold uppercase tracking-widest border-b border-slate-800 pb-1 mb-2">Input Parameters</div>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.args}</ReactMarkdown>
                 </div>
-              ) : (
-                  <div className="relative pl-3 space-y-4">
-                    <div className="absolute left-[13px] top-2 bottom-4 w-px bg-slate-200 dark:bg-slate-800" />
-
-                    {filteredActivities.map((activity, idx) => (
-                      <motion.div
-                        key={activity.id}
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.03 }}
-                        className="relative pl-8"
-                      >
-                        <div className={cn(
-                          "absolute left-0 top-1 w-2.5 h-2.5 rounded-full border-2 bg-white dark:bg-slate-900 z-10",
-                          activity.state === "live" ? "border-primary animate-pulse" :
-                            activity.state === "error" ? "border-rose-500" : "border-slate-300 dark:border-slate-700"
-                        )} />
-
-                        <div className={cn(
-                          "rounded-xl border p-4 transition-all hover:shadow-md",
-                          activity.state === "error"
-                            ? "bg-rose-50/50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/30 shadow-rose-100/20"
-                            : activity.state === "done" && activity.kind === "tool_result"
-                              ? "bg-emerald-50/30 border-emerald-100 dark:bg-emerald-950/10 dark:border-emerald-900/20 shadow-emerald-100/10"
-                              : "bg-white/80 dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-sm"
-                        )}>
-                          <div className="flex items-center gap-3 mb-2">
-                            <div className={cn(
-                              "p-1.5 rounded-lg",
-                              activity.kind === "tool_call" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" :
-                                activity.kind === "tool_result" ? "bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400" :
-                                  "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                            )}>
-                              {getActivityIcon(activity)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[11px] font-black tracking-tight text-slate-800 dark:text-slate-200">
-                                {activity.label}
-                              </div>
-                              {activity.state === "live" && (
-                                <div className="text-[9px] text-primary font-bold uppercase tracking-widest animate-pulse mt-0.5">
-                                  Active Processing
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {activity.label.includes("write_todos") && activity.args && (
-                            <div className="mt-2">
-                              <TodoList todos={parseTodos(activity.args)} />
-                            </div>
-                          )}
-
-                          {activity.detail && !activity.args && !activity.result && !activity.label.includes("write_todos") && (
-                            <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 break-words line-clamp-2">
-                              {activity.detail}
-                            </p>
-                          )}
-
-                          <div className="space-y-3">
-                            {activity.args && !activity.label.includes("write_todos") && (
-                              <div className="space-y-1.5">
-                                <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">
-                                  <Terminal className="h-2.5 w-2.5" />
-                                  Parameters
-                                </div>
-                                <div className="rounded-lg bg-slate-950 p-3 text-[10px] font-mono leading-relaxed text-slate-300 overflow-x-auto border border-slate-800/50">
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.args}</ReactMarkdown>
-                                </div>
-                              </div>
-                            )}
-
-                            {activity.result && (
-                              <div className="space-y-1.5">
-                                <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.15em] text-sky-500 dark:text-sky-400">
-                                  <CheckCircle2 className="h-2.5 w-2.5" />
-                                  Output Result
-                                </div>
-                                <div className="rounded-lg bg-slate-100 dark:bg-slate-950/50 p-3 text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 border border-slate-200/50 dark:border-slate-800/50 max-h-48 overflow-y-auto custom-scrollbar">
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.result}</ReactMarkdown>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
+              )}
+              {activity.result && (
+                <div className="space-y-2 mt-4">
+                  <div className="text-[8px] text-emerald-500/70 font-bold uppercase tracking-widest border-b border-slate-800 pb-1 mb-2">Output Result</div>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.result}</ReactMarkdown>
+                </div>
               )}
             </div>
           </motion.div>
@@ -586,7 +569,7 @@ function LiveTrace({
   )
 }
 
-function StickyTodoPanel({ todos }: { todos: Todo[] }) {
+function IntegratedTodoPanel({ todos }: { todos: Todo[] }) {
   const [isExpanded, setIsExpanded] = useState(false)
   if (!todos.length) return null
 
@@ -595,103 +578,92 @@ function StickyTodoPanel({ todos }: { todos: Todo[] }) {
   const activeTask = todos.find((t) => t.status === "in_progress") || todos.find((t) => t.status === "pending")
 
   return (
-    <div className="sticky top-0 z-30 px-8 py-2 pointer-events-none">
-      <div className="max-w-4xl mx-auto pointer-events-auto">
-        <motion.div
-          initial={{ y: -10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="glass rounded-xl border border-primary/20 shadow-lg shadow-primary/5 overflow-hidden"
-        >
-          <div
-            className="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-slate-50/50 dark:hover:bg-white/5 transition-colors"
-            onClick={() => setIsExpanded(!isExpanded)}
-          >
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-                <ListTodo className="h-3.5 w-3.5 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[11px] font-bold text-slate-700 dark:text-slate-100 truncate">
-                  {activeTask 
-                    ? activeTask.content 
-                    : todos.every(t => t.status === "completed") 
-                      ? "Analysis Complete" 
-                      : "Preparing next steps..."}
-                </div>
-              </div>
-              <div className="flex items-center gap-4 px-2">
-                <div className="hidden sm:flex items-center gap-3">
-                  <div className="w-20 h-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-200/50 dark:border-slate-800/50">
-                    <motion.div
-                      className="h-full bg-primary"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progress}%` }}
-                    />
-                  </div>
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider tabular-nums">
-                    {completedCount}/{todos.length}
-                  </span>
-                </div>
-                <div className={cn(
-                  "p-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-400 transition-all",
-                  isExpanded && "rotate-180 text-primary"
-                )}>
-                  <ChevronDown className="h-3 w-3" />
-                </div>
-              </div>
+    <motion.div
+      initial={{ y: 20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-2xl shadow-lg overflow-hidden transition-all duration-300"
+    >
+      <div
+        className="px-5 py-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <ListTodo className="h-4 w-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Analysis Plan</span>
+              <span className="text-[10px] font-bold text-primary tabular-nums">{completedCount}/{todos.length}</span>
+            </div>
+            <div className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
+              {activeTask?.content || "Finalizing process..."}
             </div>
           </div>
-
-          <AnimatePresence>
-            {isExpanded && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3, ease: "easeInOut" }}
-                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/50"
-              >
-                <div className="p-4 pt-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar bg-slate-50/50 dark:bg-slate-950/20">
-                  {todos.map((todo, idx) => (
-                    <motion.div
-                      key={idx}
-                      initial={{ x: -10, opacity: 0 }}
-                      animate={{ x: 0, opacity: 1 }}
-                      transition={{ delay: idx * 0.03 }}
-                      className="flex items-start gap-3 group"
-                    >
-                      <div className="mt-0.5 shrink-0 transition-transform group-hover:scale-110">
-                        {todo.status === "completed" ? (
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                        ) : todo.status === "in_progress" ? (
-                          <CircleDashed className="h-3.5 w-3.5 text-primary animate-spin" />
-                        ) : todo.status === "failed" ? (
-                          <Info className="h-3.5 w-3.5 text-rose-500" />
-                        ) : (
-                          <Circle className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" />
-                        )}
-                      </div>
-                      <span
-                        className={cn(
-                          "text-xs leading-snug transition-all",
-                          todo.status === "completed"
-                            ? "text-slate-400 line-through"
-                            : todo.status === "in_progress"
-                              ? "text-slate-900 dark:text-white font-medium"
-                              : "text-slate-600 dark:text-slate-400",
-                        )}
-                      >
-                        {todo.content}
-                      </span>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
+        </div>
+        
+        <div className="flex items-center gap-4">
+          <div className="w-24 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden hidden sm:block">
+            <motion.div
+              className="h-full bg-primary"
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className={cn(
+            "p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 transition-all duration-300",
+            isExpanded && "rotate-180 bg-primary/10 text-primary"
+          )}>
+            <ChevronDown className="h-4 w-4" />
+          </div>
+        </div>
       </div>
-    </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-t border-slate-100 dark:border-slate-800/50"
+          >
+            <div className="p-4 space-y-2.5 max-h-48 overflow-y-auto custom-scrollbar">
+              {todos.map((todo, idx) => (
+                <motion.div
+                  key={idx}
+                  initial={{ x: -10, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="flex items-start gap-4 group"
+                >
+                  <div className="mt-0.5 shrink-0 transition-transform group-hover:scale-110">
+                    {todo.status === "completed" ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    ) : todo.status === "in_progress" ? (
+                      <CircleDashed className="h-4 w-4 text-primary animate-spin" />
+                    ) : (
+                      <Circle className="h-4 w-4 text-slate-300 dark:text-slate-700" />
+                    )}
+                  </div>
+                  <span
+                    className={cn(
+                      "text-[13px] leading-tight transition-all",
+                      todo.status === "completed"
+                        ? "text-slate-400 line-through decoration-slate-300"
+                        : todo.status === "in_progress"
+                          ? "text-slate-900 dark:text-white font-bold"
+                          : "text-slate-600 dark:text-slate-400 font-medium",
+                    )}
+                  >
+                    {todo.content}
+                  </span>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
@@ -713,41 +685,6 @@ function getLatestTodos(messages: Message[]): Todo[] {
   return []
 }
 
-function TodoList({ todos }: { todos: Todo[] }) {
-  if (!todos.length) return null
-
-  return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-      <div className="bg-slate-50 dark:bg-slate-800/50 px-3 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
-        <ListTodo className="h-3.5 w-3.5 text-primary" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Plan of Action</span>
-      </div>
-      <div className="divide-y divide-slate-100 dark:divide-slate-800">
-        {todos.map((todo, idx) => (
-          <div key={idx} className="px-3 py-2.5 flex items-start gap-3 group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-            <div className="mt-0.5 shrink-0">
-              {todo.status === "completed" ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              ) : todo.status === "in_progress" ? (
-                <CircleDashed className="h-4 w-4 text-primary animate-spin" />
-              ) : todo.status === "failed" ? (
-                <Info className="h-4 w-4 text-rose-500" />
-              ) : (
-                <Circle className="h-4 w-4 text-slate-300 dark:text-slate-600" />
-              )}
-            </div>
-            <div className={cn(
-              "text-xs leading-tight transition-colors",
-              todo.status === "completed" ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-300 font-medium"
-            )}>
-              {todo.content}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 function parseTodos(args: string): Todo[] {
   try {
@@ -839,23 +776,12 @@ function extractStreamState(payload: unknown): StreamEnvelope {
       // Structural filter: If it's an assistant message, it only counts as "Chat Content" if:
       // 1. It's not from an internal node
       // 2. It doesn't contain tool calls (meaning it's a final prose response, not a planning step)
-      // 3. It's not a technical status update (like "Updated todo list...")
       if (isAssistant && messageContent && !isInternalNode) {
         const hasToolCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0
-        const isTechnicalUpdate = messageContent.startsWith("Updated todo list") || messageContent.startsWith("Plan updated")
 
-        if (!hasToolCalls && !isTechnicalUpdate) {
+        if (!hasToolCalls) {
           content = messageContent
         }
-
-      // Even if we don't show it in main content, we show it in the trace
-        activities = upsertActivity(activities, {
-          id: message.id || `${nodeName}-assistant`,
-          kind: "status",
-          state: "done",
-          label: "Internal thought",
-          detail: previewText(messageContent),
-        })
       }
 
       if ((message.type === "ai" || message.role === "assistant") && Array.isArray(message.tool_calls)) {
@@ -1211,21 +1137,21 @@ function mapRunEventToActivity(event: ThreadRunEvent): StreamActivity | null {
       kind: "tool_call",
       state: event.status === "error" ? "error" : "live",
       label: `Running ${event.name || "tool"}`,
-      detail: summarizeArgs(event.payload.args),
+      args: summarizeArgs(event.payload.args),
     }
   }
 
   if (event.event_type === "tool_result") {
     const content =
       typeof event.payload.content === "string"
-        ? formatToolContent(event.payload.content)
-        : formatToolContent(JSON.stringify(event.payload.content, null, 2), "json")
+        ? event.payload.content
+        : JSON.stringify(event.payload.content, null, 2)
     return {
       id: event.correlation_id || event.event_id,
       kind: "tool_result",
       state: event.status === "error" ? "error" : "done",
       label: `${event.name || "Tool"} ${event.status === "error" ? "returned an error" : "finished"}`,
-      detail: previewText(content),
+      result: content,
     }
   }
 
