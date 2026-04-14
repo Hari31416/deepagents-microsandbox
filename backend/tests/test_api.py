@@ -24,3 +24,7 @@ def test_create_and_get_thread() -> None:
     get_response = client.get(f"/api/threads/{thread_id}")
     assert get_response.status_code == 200
     assert get_response.json()["title"] == "First thread"
+
+    runs_response = client.get(f"/api/threads/{thread_id}/runs")
+    assert runs_response.status_code == 200
+    assert runs_response.json() == {"runs": []}

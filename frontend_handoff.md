@@ -13,10 +13,11 @@ Current responsibilities:
 - thread creation and lookup
 - file upload/download presign endpoints
 - file metadata registration
-- chat streaming proxy to LangGraph deployment
+- backend-owned chat streaming from the in-process LangGraph runtime
+- thread run metadata and run history
 - ownership checks per thread
 
-The frontend should talk only to this backend. It should not call MinIO or LangGraph deployment directly.
+The frontend should talk only to this backend. It should not call MinIO or LangGraph directly.
 
 ## Base URLs
 

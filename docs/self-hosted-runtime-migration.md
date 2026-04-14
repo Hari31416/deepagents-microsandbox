@@ -4,6 +4,13 @@
 
 This project will move away from the licensed LangGraph Agent Server path (`langgraph up`, standalone Agent Server, and related deployment/runtime glue) and toward a self-hosted backend-owned runtime.
 
+Status on April 14, 2026:
+
+- completed in the backend hot path
+- backend SSE preserved for the frontend
+- PostgreSQL-backed LangGraph checkpoints enabled when the backend uses Postgres
+- durable thread run metadata added in the backend database
+
 In practice, that means:
 
 - keep using open-source LangGraph and DeepAgents in-process
@@ -83,6 +90,14 @@ This is the recommended target for this repo.
 - harden run metadata and error handling
 - expand integration coverage
 - remove leftover deployment/runtime glue that only existed for the licensed server path
+
+Implemented in this repo:
+
+- backend-owned run ledger with status, timestamps, staged files, output preview, and failure detail
+- backend-managed SSE event IDs plus explicit `metadata` and `done` events
+- runtime timeouts and normalized error handling
+- direct in-process graph execution with PostgreSQL checkpoint setup handled by the backend
+- removal of the Docker-backed Agent Server startup flow from the primary developer commands
 
 ## Migration Plan
 

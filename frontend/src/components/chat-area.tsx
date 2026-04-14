@@ -155,6 +155,18 @@ export function ChatArea() {
             content: `${message.content}${delta}`,
           }))
         }
+
+        if (event.event === "done") {
+          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+            isStreaming: false,
+            activities: upsertActivity(message.activities, {
+              id: event.id || "run-done",
+              kind: "status",
+              state: "done",
+              label: "Run completed",
+            }),
+          }))
+        }
       }
 
       updateAssistantMessage(threadId, assistantMsgId, (message) => ({

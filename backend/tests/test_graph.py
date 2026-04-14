@@ -4,7 +4,7 @@ import types
 from app.agent.graph import build_langgraph_app
 
 
-def test_build_langgraph_app_uses_runtime_persistence(monkeypatch) -> None:
+def test_build_langgraph_app_passes_optional_checkpointer(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     deepagents_module = types.ModuleType("deepagents")
@@ -29,9 +29,9 @@ def test_build_langgraph_app_uses_runtime_persistence(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "langchain.chat_models", chat_models_module)
     monkeypatch.setenv("AGENT_MODEL", "openai:test-model")
 
-    app = build_langgraph_app()
+    app = build_langgraph_app(checkpointer="checkpointer")
 
     assert app == "graph-app"
     assert captured["model_config"] == {"model": "openai:test-model", "temperature": 0}
     assert captured["backend"].__name__ == "create_backend"
-    assert "checkpointer" not in captured
+    assert captured["checkpointer"] == "checkpointer"

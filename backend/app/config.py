@@ -15,9 +15,7 @@ class Settings(BaseSettings):
     )
     postgres_uri: str | None = Field(default=None, alias="POSTGRES_URI")
     executor_base_url: str = "http://localhost:3000"
-    langgraph_base_url: str = "http://localhost:8123"
-    langgraph_assistant_id: str = "data-analyst"
-    langgraph_stream_mode: str = "updates"
+    agent_run_timeout_seconds: int = 600
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadminpassword"
@@ -37,6 +35,14 @@ class Settings(BaseSettings):
         if self.postgres_uri:
             self.database_url = self.postgres_uri.replace("postgresql://", "postgresql+psycopg://", 1)
         return self
+
+    @property
+    def runtime_postgres_uri(self) -> str | None:
+        if self.database_url.startswith("postgresql+psycopg://"):
+            return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url
+        return None
 
 
 @lru_cache(maxsize=1)

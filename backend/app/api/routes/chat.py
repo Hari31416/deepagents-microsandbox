@@ -28,4 +28,12 @@ async def stream_chat(
         message=payload.message,
         selected_file_ids=payload.selected_file_ids,
     )
-    return StreamingResponse(stream, media_type="text/event-stream")
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

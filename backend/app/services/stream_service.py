@@ -1,18 +1,31 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
-import httpx
-
-from app.config import Settings
 from app.agent.backend import MicrosandboxBackend
+from app.config import Settings
 from app.services.file_service import FileService
+from app.services.run_service import RunService
+from app.services.runtime_service import RuntimeService
 from app.services.thread_service import ThreadService
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
-def _sse(event: str, data: dict[str, object]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+logger = logging.getLogger(__name__)
+
+
+def _sse(event: str, data: dict[str, object], *, event_id: str | None = None) -> str:
+    lines: list[str] = []
+    if event_id:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event}")
+    lines.append(f"data: {json.dumps(data)}")
+    return "\n".join(lines) + "\n\n"
 
 
 class StreamService:
@@ -20,14 +33,16 @@ class StreamService:
         self,
         thread_service: ThreadService,
         file_service: FileService,
+        run_service: RunService,
+        runtime_service: RuntimeService,
         settings: Settings,
-        transport: httpx.AsyncBaseTransport | None = None,
         sandbox_backend_factory=MicrosandboxBackend,
     ) -> None:
         self._thread_service = thread_service
         self._file_service = file_service
+        self._run_service = run_service
+        self._runtime_service = runtime_service
         self._settings = settings
-        self._transport = transport
         self._sandbox_backend_factory = sandbox_backend_factory
 
     async def stream_chat(
@@ -36,7 +51,7 @@ class StreamService:
         thread_id: str,
         message: str,
         selected_file_ids: list[str],
-    ):
+    ) -> AsyncIterator[str]:
         if self._thread_service.get_thread_for_owner(owner_id=owner_id, thread_id=thread_id) is None:
             yield _sse("error", {"detail": "Thread not found"})
             return
@@ -57,96 +72,164 @@ class StreamService:
             return
 
         resolved_file_ids = [str(file["file_id"]) for file in workspace_files]
-
-        async with httpx.AsyncClient(
-            base_url=self._settings.langgraph_base_url.rstrip("/"),
-            timeout=None,
-            transport=self._transport,
-            headers=self._request_headers(owner_id=owner_id, thread_id=thread_id),
-        ) as client:
-            thread_error = await self._ensure_langgraph_thread(
-                client=client,
-                owner_id=owner_id,
-                thread_id=thread_id,
-            )
-            if thread_error is not None:
-                yield _sse("error", {"detail": thread_error})
-                return
-
-            async with client.stream(
-                "POST",
-                f"/threads/{thread_id}/runs/stream",
-                json=self._build_run_payload(
-                    owner_id=owner_id,
-                    thread_id=thread_id,
-                    message=message,
-                    selected_file_ids=resolved_file_ids,
-                    workspace_files=workspace_files,
-                ),
-            ) as response:
-                if not response.is_success:
-                    yield _sse("error", {"detail": await self._response_error(response)})
-                    return
-
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        yield chunk
-
-    async def _ensure_langgraph_thread(
-        self,
-        *,
-        client: httpx.AsyncClient,
-        owner_id: str,
-        thread_id: str,
-    ) -> str | None:
-        response = await client.post(
-            "/threads",
-            json={
-                "thread_id": thread_id,
-                "metadata": {"owner_id": owner_id},
-            },
+        workspace_paths = [f"/workspace/{file['original_filename']}" for file in workspace_files]
+        input_message = self._build_input_message(message=message, workspace_files=workspace_files)
+        run = self._run_service.create_run(
+            thread_id=thread_id,
+            owner_id=owner_id,
+            input_message=input_message,
+            selected_file_ids=resolved_file_ids,
+            workspace_files=workspace_paths,
         )
-        if response.status_code in {200, 201, 409}:
-            return None
-        return await self._response_error(response)
+        self._run_service.mark_running(run_id=str(run["run_id"]))
 
-    def _build_run_payload(
+        event_count = 0
+        content_parts: list[str] = []
+
+        def next_event_id() -> str:
+            nonlocal event_count
+            event_count += 1
+            return f"{run['run_id']}:{event_count}"
+
+        yield _sse(
+            "metadata",
+            {
+                "run_id": run["run_id"],
+                "thread_id": thread_id,
+                "status": "running",
+            },
+            event_id=next_event_id(),
+        )
+
+        try:
+            async with asyncio.timeout(self._settings.agent_run_timeout_seconds):
+                async with self._runtime_service.graph() as graph:
+                    async for event in self._stream_graph_events(
+                        graph=graph,
+                        owner_id=owner_id,
+                        thread_id=thread_id,
+                        message=input_message,
+                        selected_file_ids=resolved_file_ids,
+                        workspace_files=workspace_paths,
+                    ):
+                        if event["event"] == "delta":
+                            delta = str(event["data"].get("delta", ""))
+                            if delta:
+                                content_parts.append(delta)
+
+                        yield _sse(
+                            event["event"],
+                            event["data"],
+                            event_id=next_event_id(),
+                        )
+
+                self._run_service.complete_run(
+                    run_id=str(run["run_id"]),
+                    output_text="".join(content_parts),
+                    event_count=event_count,
+                )
+                yield _sse(
+                    "done",
+                    {
+                        "run_id": run["run_id"],
+                        "thread_id": thread_id,
+                        "status": "completed",
+                    },
+                    event_id=next_event_id(),
+                )
+        except TimeoutError:
+            detail = f"Run exceeded {self._settings.agent_run_timeout_seconds} seconds"
+            self._run_service.fail_run(
+                run_id=str(run["run_id"]),
+                error_detail=detail,
+                output_text="".join(content_parts),
+                event_count=event_count,
+            )
+            yield _sse("error", {"detail": detail, "run_id": run["run_id"]}, event_id=next_event_id())
+        except Exception as exc:
+            logger.exception("Run %s failed for thread %s", run["run_id"], thread_id)
+            detail = self._normalize_runtime_error(exc)
+            self._run_service.fail_run(
+                run_id=str(run["run_id"]),
+                error_detail=detail,
+                output_text="".join(content_parts),
+                event_count=event_count,
+            )
+            yield _sse("error", {"detail": detail, "run_id": run["run_id"]}, event_id=next_event_id())
+
+    async def _stream_graph_events(
         self,
         *,
+        graph,
         owner_id: str,
         thread_id: str,
         message: str,
         selected_file_ids: list[str],
-        workspace_files: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        enriched_message = message
-        if workspace_files:
-            file_inventory = "\n".join(
-                f"- /workspace/{file['original_filename']} (file_id: {file['file_id']})"
-                for file in workspace_files
-            )
-            enriched_message = (
-                "Workspace files are mounted under /workspace in the sandbox.\n"
-                "Workspace files currently available in the sandbox:\n"
-                f"{file_inventory}\n\n"
-                "User request:\n"
-                f"{message}"
-            )
-
-        return {
-            "assistant_id": self._settings.langgraph_assistant_id,
-            "input": {
-                "messages": [{"role": "user", "content": enriched_message}],
-                "selected_file_ids": selected_file_ids,
-            },
-            "context": {
-                "user_id": owner_id,
+        workspace_files: list[str],
+    ) -> AsyncIterator[dict[str, object]]:
+        config = {
+            "configurable": {
                 "thread_id": thread_id,
-                "selected_file_ids": selected_file_ids,
-                "workspace_files": [f"/workspace/{file['original_filename']}" for file in workspace_files],
-            },
-            "stream_mode": self._settings.langgraph_stream_mode,
+            }
         }
+        context = {
+            "user_id": owner_id,
+            "thread_id": thread_id,
+            "selected_file_ids": selected_file_ids,
+            "workspace_files": workspace_files,
+        }
+        payload = {
+            "messages": [{"role": "user", "content": message}],
+            "selected_file_ids": selected_file_ids,
+        }
+
+        async for part in graph.astream(
+            payload,
+            config=config,
+            context=context,
+            stream_mode=("updates", "messages"),
+            version="v2",
+        ):
+            if not isinstance(part, dict):
+                continue
+            part_type = str(part.get("type", ""))
+            if part_type == "updates":
+                updates = part.get("data")
+                if isinstance(updates, dict) and updates:
+                    yield {"event": "updates", "data": self._serialize_payload(updates)}
+                continue
+            if part_type != "messages":
+                continue
+
+            chunk_payload = part.get("data")
+            if not isinstance(chunk_payload, tuple) or len(chunk_payload) != 2:
+                continue
+
+            message_chunk = chunk_payload[0]
+            delta = self._extract_message_text(message_chunk)
+            if delta:
+                yield {"event": "delta", "data": {"delta": delta}}
+
+    def _build_input_message(
+        self,
+        *,
+        message: str,
+        workspace_files: list[dict[str, Any]],
+    ) -> str:
+        if not workspace_files:
+            return message
+
+        file_inventory = "\n".join(
+            f"- /workspace/{file['original_filename']} (file_id: {file['file_id']})"
+            for file in workspace_files
+        )
+        return (
+            "Workspace files are mounted under /workspace in the sandbox.\n"
+            "Workspace files currently available in the sandbox:\n"
+            f"{file_inventory}\n\n"
+            "User request:\n"
+            f"{message}"
+        )
 
     def _resolve_workspace_files(
         self,
@@ -205,25 +288,45 @@ class StreamService:
             raise RuntimeError(f"Failed to stage files in sandbox: {failure_details}")
 
     @staticmethod
-    def _request_headers(*, owner_id: str, thread_id: str) -> dict[str, str]:
-        return {
-            "X-User-Id": owner_id,
-            "X-Thread-Id": thread_id,
-            "Accept": "text/event-stream",
-        }
+    def _extract_message_text(message_chunk: object) -> str:
+        content = getattr(message_chunk, "text", "")
+        if callable(content):
+            content = content()
+        if isinstance(content, str):
+            return content
+
+        raw_content = getattr(message_chunk, "content", "")
+        if isinstance(raw_content, str):
+            return raw_content
+        if isinstance(raw_content, list):
+            parts = [
+                str(part.get("text", ""))
+                for part in raw_content
+                if isinstance(part, dict) and part.get("type") == "text"
+            ]
+            return "".join(parts)
+        return ""
 
     @staticmethod
-    async def _response_error(response: httpx.Response) -> str:
-        try:
-            payload = await response.aread()
-        except httpx.HTTPError:
-            return f"LangGraph request failed with HTTP {response.status_code}"
+    def _normalize_runtime_error(exc: Exception) -> str:
+        detail = str(exc).strip()
+        return detail or exc.__class__.__name__
 
-        if not payload:
-            return f"LangGraph request failed with HTTP {response.status_code}"
+    @classmethod
+    def _serialize_payload(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(key): cls._serialize_payload(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._serialize_payload(item) for item in value]
 
-        try:
-            decoded = json.loads(payload)
-        except json.JSONDecodeError:
-            return payload.decode("utf-8", errors="replace")
-        return str(decoded.get("detail") or decoded.get("error") or f"HTTP {response.status_code}")
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return cls._serialize_payload(model_dump(mode="json"))
+
+        legacy_dict = getattr(value, "dict", None)
+        if callable(legacy_dict):
+            return cls._serialize_payload(legacy_dict())
+
+        return str(value)

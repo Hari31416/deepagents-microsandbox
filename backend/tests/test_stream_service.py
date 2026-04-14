@@ -1,8 +1,7 @@
-import asyncio
+from __future__ import annotations
 
-import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+import asyncio
+from contextlib import asynccontextmanager
 
 from app.agent.backend import FileUploadResponse
 from app.config import Settings
@@ -78,44 +77,96 @@ class StubSandboxBackend:
         return [FileUploadResponse(path=path) for path, _ in files]
 
 
-def test_stream_service_stages_thread_uploads_when_request_omits_file_ids() -> None:
-    observed: dict[str, dict[str, object]] = {}
-    app = FastAPI()
+class StubRunService:
+    def __init__(self) -> None:
+        self.created_runs: list[dict[str, object]] = []
+        self.running_runs: list[str] = []
+        self.completed_runs: list[dict[str, object]] = []
+        self.failed_runs: list[dict[str, object]] = []
 
-    @app.post("/threads")
-    async def create_thread(request: Request):
-        observed["create_thread"] = {
-            "headers": dict(request.headers),
-            "payload": await request.json(),
-        }
-        return JSONResponse({"thread_id": "thread-1"}, status_code=201)
+    def create_run(self, **kwargs):
+        run = {"run_id": "run-1", **kwargs, "status": "pending"}
+        self.created_runs.append(run)
+        return run
 
-    @app.post("/threads/thread-1/runs/stream")
-    async def stream_run(request: Request):
-        observed["stream_run"] = {
-            "headers": dict(request.headers),
-            "payload": await request.json(),
-        }
+    def mark_running(self, *, run_id: str):
+        self.running_runs.append(run_id)
+        return {"run_id": run_id, "status": "running"}
 
-        async def event_stream():
-            yield b"event: message\ndata: {\"delta\":\"hello\"}\n\n"
-            yield b"event: done\ndata: {\"thread_id\":\"thread-1\"}\n\n"
+    def complete_run(self, **kwargs):
+        self.completed_runs.append(kwargs)
+        return kwargs
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+    def fail_run(self, **kwargs):
+        self.failed_runs.append(kwargs)
+        return kwargs
 
+
+class StubMessageChunk:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class StubGraph:
+    def __init__(self, parts: list[dict[str, object]] | None = None, error: Exception | None = None) -> None:
+        self.parts = parts or []
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    async def astream(self, payload, *, config, context, stream_mode, version):
+        self.calls.append(
+            {
+                "payload": payload,
+                "config": config,
+                "context": context,
+                "stream_mode": stream_mode,
+                "version": version,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        for part in self.parts:
+            yield part
+
+
+class StubRuntimeService:
+    def __init__(self, graph: StubGraph) -> None:
+        self.graph_instance = graph
+
+    @asynccontextmanager
+    async def graph(self):
+        yield self.graph_instance
+
+
+def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     file_service = StubFileService()
+    run_service = StubRunService()
+    graph = StubGraph(
+        parts=[
+            {
+                "type": "updates",
+                "data": {
+                    "agent": {
+                        "messages": [
+                            {"type": "ai", "content": "Inspecting iris.csv"},
+                        ]
+                    }
+                },
+            },
+            {
+                "type": "messages",
+                "data": (StubMessageChunk("hello"), {"langgraph_node": "agent"}),
+            },
+        ]
+    )
     StubSandboxBackend.instances = []
     StubSandboxBackend.next_upload_results = None
     service = StreamService(
         thread_service=StubThreadService(),
         file_service=file_service,
-        settings=Settings(
-            database_url="sqlite+pysqlite:///:memory:",
-            langgraph_base_url="http://langgraph.test",
-            langgraph_assistant_id="data-analyst",
-            langgraph_stream_mode="updates",
-        ),
-        transport=httpx.ASGITransport(app=app),
+        run_service=run_service,
+        runtime_service=StubRuntimeService(graph),
+        settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
         sandbox_backend_factory=StubSandboxBackend,
     )
 
@@ -127,43 +178,75 @@ def test_stream_service_stages_thread_uploads_when_request_omits_file_ids() -> N
             message="What columns are in the file?",
             selected_file_ids=[],
         ):
-            chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+            chunks.append(chunk)
         return "".join(chunks)
 
     output = asyncio.run(consume_stream())
 
-    assert "event: message" in output
+    assert "event: metadata" in output
+    assert "event: updates" in output
+    assert "event: delta" in output
+    assert "event: done" in output
     assert file_service.list_files_calls == [("user-1", "thread-1")]
     assert file_service.content_requests == ["file-1"]
     assert len(StubSandboxBackend.instances) == 1
     assert StubSandboxBackend.instances[0].uploaded_files == [
         ("iris.csv", b"sepal_length,sepal_width\n5.1,3.5\n")
     ]
-    assert observed["stream_run"]["payload"] == {
-        "assistant_id": "data-analyst",
-        "input": {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": (
-                        "Workspace files are mounted under /workspace in the sandbox.\n"
-                        "Workspace files currently available in the sandbox:\n"
-                        "- /workspace/iris.csv (file_id: file-1)\n\n"
-                        "User request:\n"
-                        "What columns are in the file?"
-                    ),
-                }
-            ],
-            "selected_file_ids": ["file-1"],
-        },
-        "context": {
-            "user_id": "user-1",
+    assert run_service.created_runs == [
+        {
+            "run_id": "run-1",
             "thread_id": "thread-1",
+            "owner_id": "user-1",
+            "input_message": (
+                "Workspace files are mounted under /workspace in the sandbox.\n"
+                "Workspace files currently available in the sandbox:\n"
+                "- /workspace/iris.csv (file_id: file-1)\n\n"
+                "User request:\n"
+                "What columns are in the file?"
+            ),
             "selected_file_ids": ["file-1"],
             "workspace_files": ["/workspace/iris.csv"],
-        },
-        "stream_mode": "updates",
-    }
+            "status": "pending",
+        }
+    ]
+    assert run_service.running_runs == ["run-1"]
+    assert run_service.completed_runs == [
+        {
+            "run_id": "run-1",
+            "output_text": "hello",
+            "event_count": 3,
+        }
+    ]
+    assert run_service.failed_runs == []
+    assert graph.calls == [
+        {
+            "payload": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Workspace files are mounted under /workspace in the sandbox.\n"
+                            "Workspace files currently available in the sandbox:\n"
+                            "- /workspace/iris.csv (file_id: file-1)\n\n"
+                            "User request:\n"
+                            "What columns are in the file?"
+                        ),
+                    }
+                ],
+                "selected_file_ids": ["file-1"],
+            },
+            "config": {"configurable": {"thread_id": "thread-1"}},
+            "context": {
+                "user_id": "user-1",
+                "thread_id": "thread-1",
+                "selected_file_ids": ["file-1"],
+                "workspace_files": ["/workspace/iris.csv"],
+            },
+            "stream_mode": ("updates", "messages"),
+            "version": "v2",
+        }
+    ]
 
 
 def test_stream_service_stops_when_workspace_staging_fails() -> None:
@@ -172,16 +255,13 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     StubSandboxBackend.next_upload_results = [
         FileUploadResponse(path="iris.csv", error="permission_denied")
     ]
+    run_service = StubRunService()
     service = StreamService(
         thread_service=StubThreadService(),
         file_service=file_service,
-        settings=Settings(
-            database_url="sqlite+pysqlite:///:memory:",
-            langgraph_base_url="http://langgraph.test",
-            langgraph_assistant_id="data-analyst",
-            langgraph_stream_mode="updates",
-        ),
-        transport=httpx.ASGITransport(app=FastAPI()),
+        run_service=run_service,
+        runtime_service=StubRuntimeService(StubGraph()),
+        settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
         sandbox_backend_factory=StubSandboxBackend,
     )
 
@@ -193,10 +273,48 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
             message="Summarize the dataset",
             selected_file_ids=["file-1"],
         ):
-            chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+            chunks.append(chunk)
         return "".join(chunks)
 
     output = asyncio.run(consume_stream())
 
     assert "event: error" in output
     assert "Failed to stage files in sandbox: iris.csv: permission_denied" in output
+    assert run_service.created_runs == []
+
+
+def test_stream_service_records_runtime_failures() -> None:
+    StubSandboxBackend.next_upload_results = None
+    run_service = StubRunService()
+    service = StreamService(
+        thread_service=StubThreadService(),
+        file_service=StubFileService(),
+        run_service=run_service,
+        runtime_service=StubRuntimeService(StubGraph(error=RuntimeError("model backend offline"))),
+        settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
+        sandbox_backend_factory=StubSandboxBackend,
+    )
+
+    async def consume_stream() -> str:
+        chunks: list[str] = []
+        async for chunk in service.stream_chat(
+            owner_id="user-1",
+            thread_id="thread-1",
+            message="Summarize the dataset",
+            selected_file_ids=["file-1"],
+        ):
+            chunks.append(chunk)
+        return "".join(chunks)
+
+    output = asyncio.run(consume_stream())
+
+    assert "event: error" in output
+    assert "model backend offline" in output
+    assert run_service.failed_runs == [
+        {
+            "run_id": "run-1",
+            "error_detail": "model backend offline",
+            "output_text": "",
+            "event_count": 1,
+        }
+    ]

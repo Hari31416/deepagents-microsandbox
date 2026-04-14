@@ -5,8 +5,14 @@ import { defineConfig, loadEnv } from "vite"
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, path.resolve(__dirname, ".."), "")
-  const port = parseInt(env.FRONTEND_PORT || "3001")
+  const port = parseInt(env.PORT || env.FRONTEND_PORT || "3001")
   const backendPort = env.BACKEND_PORT || "8000"
+  const allowedHosts = (env.ALLOWED_HOSTS || "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter(Boolean)
+  const apiBaseUrl = env.VITE_API_BASE_URL || env.API_BASE_URL || "/api"
+  const shouldProxyApi = apiBaseUrl === "/api"
 
   return {
     plugins: [react()],
@@ -19,12 +25,15 @@ export default defineConfig(({ mode }) => {
       port,
       strictPort: true,
       host: "0.0.0.0",
-      proxy: {
-        "/api": {
-          target: `http://localhost:${backendPort}`,
-          changeOrigin: true,
-        },
-      },
+      allowedHosts,
+      proxy: shouldProxyApi
+        ? {
+            "/api": {
+              target: `http://localhost:${backendPort}`,
+              changeOrigin: true,
+            },
+          }
+        : undefined,
     },
   }
 })

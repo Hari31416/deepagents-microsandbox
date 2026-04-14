@@ -34,7 +34,17 @@ def create_backend(runtime):
 
 
 @lru_cache(maxsize=1)
-def build_langgraph_app():
+def _build_cached_langgraph_app():
+    return _build_langgraph_app()
+
+
+def build_langgraph_app(*, checkpointer=None):
+    if checkpointer is None:
+        return _build_cached_langgraph_app()
+    return _build_langgraph_app(checkpointer=checkpointer)
+
+
+def _build_langgraph_app(*, checkpointer=None):
     try:
         from deepagents import create_deep_agent
         from langchain.chat_models import init_chat_model
@@ -52,5 +62,6 @@ def build_langgraph_app():
         system_prompt=SYSTEM_PROMPT,
         backend=create_backend,
         context_schema=AgentContext,
+        checkpointer=checkpointer,
         name="data-analyst",
     )

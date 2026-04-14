@@ -52,3 +52,31 @@ async def list_thread_files(
         return {"files": services.file_service.list_files(owner_id=user.user_id, thread_id=thread_id)}
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{thread_id}/runs")
+async def list_thread_runs(
+    thread_id: str,
+    user: Annotated[UserContext, Depends(get_current_user)],
+):
+    services = get_services()
+    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return {"runs": services.run_service.list_runs(owner_id=user.user_id, thread_id=thread_id)}
+
+
+@router.get("/{thread_id}/runs/{run_id}")
+async def get_thread_run(
+    thread_id: str,
+    run_id: str,
+    user: Annotated[UserContext, Depends(get_current_user)],
+):
+    services = get_services()
+    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    run = services.run_service.get_run(owner_id=user.user_id, thread_id=thread_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    return run

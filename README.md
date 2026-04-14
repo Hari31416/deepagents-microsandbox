@@ -6,7 +6,7 @@ The system is being built around:
 
 - [DeepAgents](https://github.com/langchain-ai/deepagents) for the agent harness
 - [microsandbox](https://github.com/superradcompany/microsandbox) for isolated code execution
-- LangGraph deployment/runtime for streaming, resumability, and durable agent execution
+- an in-process LangGraph runtime owned by the backend for streaming, resumability, and durable agent execution
 - Postgres for product metadata and LangGraph runtime persistence
 - MinIO for uploads and generated artifact storage
 - Redis only where it is actually needed
@@ -17,9 +17,9 @@ This repository is in active PoC design and implementation.
 
 Current direction:
 
-- `backend/` will host the product-facing API and LangGraph agent app
+- `backend/` hosts the product-facing API and the in-process LangGraph agent runtime
 - `microsandbox-executor/` is the execution control plane
-- `frontend/` will be built later from scratch after the backend and agent flow are stable
+- `frontend/` consumes backend-owned SSE from `/api/chat/stream`
 
 The authoritative build plan is in [implementation_plan.md](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/implementation_plan.md).
 
@@ -44,12 +44,12 @@ At a high level:
 ```text
 Browser
   -> Backend API
-  -> LangGraph deployment
+  -> in-process LangGraph runtime
   -> Microsandbox executor
   -> Postgres
   -> MinIO
 
-LangGraph runtime
+Backend runtime
   -> DeepAgent
   -> custom MicrosandboxBackend
   -> microsandbox-executor
@@ -84,9 +84,9 @@ This repo does not modify `microsandbox` directly. Instead, it uses a dedicated 
 - captures stdout/stderr/exit data
 - persists generated files back to object storage
 
-### LangGraph Runtime
+### Backend-Owned Runtime
 
-LangGraph will be used as the runtime for the agent graph because it gives us:
+LangGraph is used in-process inside the FastAPI backend because it gives us:
 
 - streaming
 - resumable thread execution
@@ -130,8 +130,6 @@ cp .env.example .env
 docker compose up -d
 ```
 
-For the Docker-backed LangGraph runtime, local development also requires `LANGSMITH_API_KEY` or `LANGGRAPH_CLOUD_LICENSE_KEY` in `.env`.
-
 Default local endpoints:
 
 - Postgres: `localhost:5432`
@@ -151,7 +149,8 @@ It will handle:
 - thread creation and ownership checks
 - presigned MinIO upload/download URLs
 - file metadata registration
-- streaming proxy to LangGraph deployment
+- backend-owned SSE streaming for agent runs
+- durable run metadata and run history
 - mapping `thread_id -> sandbox_session_id`
 
 The browser should not talk directly to MinIO or to the sandbox executor.
@@ -201,5 +200,5 @@ The primary interaction is not a manual code editor. The primary interaction is 
 1. Scaffold `backend/`
 2. Move `microsandbox-executor` to Postgres and MinIO-backed persistence
 3. Implement the custom DeepAgents sandbox backend
-4. Wire the agent into LangGraph deployment
+4. Wire the agent into the backend-owned runtime
 5. Build the new frontend after the backend path is stable

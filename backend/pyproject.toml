@@ -12,7 +12,6 @@ dependencies = [
   "langchain>=1.1,<2",
   "langchain-openai>=1.0,<2",
   "langgraph-checkpoint-postgres>=2.0,<3",
-  "langgraph-cli[inmem]>=0.1.72,<1",
   "minio>=7.2,<8",
   "pydantic-settings>=2.4,<3",
   "psycopg[binary]>=3.2,<4",
@@ -37,7 +36,6 @@ include = [
   "app",
   "tests",
   "README.md",
-  "langgraph.json",
 ]
 
 [build-system]

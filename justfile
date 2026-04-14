@@ -13,11 +13,11 @@ down:
 nuke:
   docker compose down -v --remove-orphans
 
-up-all: up backend-start executor-start frontend-start langgraph-start
+up-all: up backend-start executor-start frontend-start
 
-down-all: frontend-stop langgraph-stop executor-stop backend-stop down
+down-all: frontend-stop executor-stop backend-stop down
 
-nuke-all: frontend-stop langgraph-stop executor-stop backend-stop nuke
+nuke-all: frontend-stop executor-stop backend-stop nuke
 
 install-uv:
   if command -v uv >/dev/null 2>&1; then \
@@ -78,19 +78,6 @@ executor-stop:
   @rm -f .run/executor.pid
   @echo "Executor stopped."
 
-langgraph-start:
-  cd backend && .venv/bin/python scripts/langgraph_docker.py up
-  echo "Started LangGraph on port ${LANGGRAPH_PORT:-8123}"
-  echo "Logs: just logs-langgraph"
-
-langgraph-stop:
-  @echo "Stopping LangGraph on port ${LANGGRAPH_PORT:-8123}..."
-  @cd backend && .venv/bin/python scripts/langgraph_docker.py down || true
-  @echo "LangGraph stopped."
-
-logs-langgraph:
-  cd backend && .venv/bin/python scripts/langgraph_docker.py logs
-
 logs-executor:
   if [[ -f .run/executor.log ]]; then \
     tail -f .run/executor.log; \
@@ -139,9 +126,9 @@ logs-frontend:
 
 setup: backend-setup executor-setup frontend-setup
 
-start: up backend-start executor-start langgraph-start frontend-start
+start: up backend-start executor-start frontend-start
 
-stop: frontend-stop langgraph-stop executor-stop backend-stop down
+stop: frontend-stop executor-stop backend-stop down
 
 restart: stop start
 
@@ -152,7 +139,6 @@ logs:
   [[ -f .run/frontend.log ]] && files+=(.run/frontend.log); \
   if (( $${#files[@]} == 0 )); then \
     echo "No backend/executor/frontend log files found under .run/"; \
-    echo "Use 'just logs-langgraph' for LangGraph container logs."; \
   else \
     tail -f "$${files[@]}"; \
   fi
@@ -174,12 +160,7 @@ ps:
     else \
       echo "$$name: stopped"; \
     fi; \
-  done; \
-  if curl -fsS "http://localhost:${LANGGRAPH_PORT:-8123}/ok" >/dev/null 2>&1; then \
-    echo "langgraph: running"; \
-  else \
-    echo "langgraph: stopped"; \
-  fi
+  done
 
 health:
   echo "== Backend =="; \
@@ -187,9 +168,6 @@ health:
   echo; \
   echo "== Sandbox Executor =="; \
   curl -fsS "http://localhost:${EXECUTOR_PORT:-3000}/v1/health" || true; \
-  echo; \
-  echo "== LangGraph =="; \
-  curl -fsS "http://localhost:${LANGGRAPH_PORT:-8123}/ok" || true; \
   echo; \
   echo "== Docker Compose =="; \
   docker compose ps
