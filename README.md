@@ -1,204 +1,141 @@
-# DeepAgent Sandbox PoC
+# DeepAgent Sandbox
 
-PoC for an authenticated data analyst agent that uses LLMs to analyze uploaded data, write code, execute that code in an isolated sandbox, and return artifacts such as transformed datasets, charts, and reports.
+An advanced agentic data analysis platform that combines LLM reasoning with isolated code execution to transform data, generate visualizations, and produce detailed reports.
 
-The system is being built around:
+## Architecture Overview
 
-- [DeepAgents](https://github.com/langchain-ai/deepagents) for the agent harness
-- [microsandbox](https://github.com/superradcompany/microsandbox) for isolated code execution
-- an in-process LangGraph runtime owned by the backend for streaming, resumability, and durable agent execution
-- Postgres for product metadata and LangGraph runtime persistence
-- MinIO for uploads and generated artifact storage
-- Redis only where it is actually needed
+DeepAgent Sandbox is built as a distributed system comprising a React-based frontend, a FastAPI backend orchestrating LangGraph workflows, and an isolated microVM-backed execution layer.
 
-## Status
-
-This repository is in active PoC design and implementation.
-
-Current direction:
-
-- `backend/` hosts the product-facing API and the in-process LangGraph agent runtime
-- `microsandbox-executor/` is the execution control plane
-- `frontend/` consumes backend-owned SSE from `/api/chat/stream`
-
-The authoritative build plan is in [implementation_plan.md](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/implementation_plan.md).
-
-The runtime migration decision is documented in [docs/self-hosted-runtime-migration.md](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/docs/self-hosted-runtime-migration.md).
-
-## Product Goal
-
-The intended user flow is:
-
-1. user signs in
-2. user uploads one or more files
-3. user asks for a transformation, analysis, or visualization
-4. the agent writes code
-5. the code executes in an isolated sandbox
-6. generated artifacts are persisted and shown back to the user
-7. the thread can be resumed later
-
-## Architecture
-
-At a high level:
-
-```text
-Browser
-  -> Backend API
-  -> in-process LangGraph runtime
-  -> Microsandbox executor
-  -> Postgres
-  -> MinIO
-
-Backend runtime
-  -> DeepAgent
-  -> custom MicrosandboxBackend
-  -> microsandbox-executor
-
-microsandbox-executor
-  -> microsandbox runtime
-  -> Postgres metadata
-  -> MinIO object storage
+```mermaid
+graph TD
+    User([User]) <--> Frontend[Frontend - React/Vite]
+    Frontend <--> Backend[Backend - FastAPI]
+    subgraph "Internal Logic"
+        Backend <--> Agent[Agent - LangGraph]
+        Agent <--> Storage[(MinIO)]
+        Agent <--> DB[(PostgreSQL)]
+        Agent <--> Redis[(Redis)]
+        Agent <--> Sandbox[Microsandbox Executor]
+    end
 ```
 
-## Core Components
+The backend manages the agent's state using LangGraph, providing durable execution, resumability, and real-time streaming via Server-Sent Events (SSE).
 
-### DeepAgents
+## Key Features
 
-DeepAgents is the agent harness. It provides:
+- **Isolated Code Execution**: Securely run agent-generated Python code in microVM-backed sandboxes via `microsandbox`.
+- **Durable Workflows**: Resumable agent threads powered by LangGraph persistence in PostgreSQL.
+- **Real-time Streaming**: Instant feedback on agent reasoning and tool execution using SSE.
+- **Artifact Management**: Automatic storage and retrieval of generated CSVs, PNGs, and reports in MinIO.
+- **Thread History**: Full persistence of chat history and agent state for long-running analyses.
 
-- planning and multi-step tool use
-- filesystem tools
-- execution support through sandbox backends
-- subagent support when needed
+## Tech Stack
 
-The plan for this PoC is to integrate with DeepAgents through a custom backend rather than through a one-off execution tool. That keeps the agent on the standard DeepAgents model for file operations and command execution.
+| Component | Technology |
+| :--- | :--- |
+| **Frontend** | React, TypeScript, Vite, Tailwind CSS, shadcn/ui |
+| **Backend** | Python 3.12+, FastAPI, LangGraph, Pydantic |
+| **Agent Harness** | DeepAgents (LangChain) |
+| **Execution Layer** | Microsandbox (microVMs) |
+| **Database** | PostgreSQL (Metadata & Checkpoints) |
+| **Cache/PubSub** | Redis |
+| **Object Storage** | MinIO (S3 Compatible) |
 
-### microsandbox
-
-[`microsandbox`](https://github.com/superradcompany/microsandbox) is the isolation layer that executes agent-generated code inside microVM-backed environments.
-
-This repo does not modify `microsandbox` directly. Instead, it uses a dedicated execution service in [`microsandbox-executor/`](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/microsandbox-executor) as the control plane that:
-
-- stages files into a workspace
-- runs code inside isolated sandboxes
-- captures stdout/stderr/exit data
-- persists generated files back to object storage
-
-### Backend-Owned Runtime
-
-LangGraph is used in-process inside the FastAPI backend because it gives us:
-
-- streaming
-- resumable thread execution
-- durable checkpoints
-- a better fit for long-running agent workflows than a stateless API
-
-## Repository Layout
+## Project Structure
 
 ```text
 .
-├── implementation_plan.md
-├── microsandbox-executor/
-│   └── service/
-├── reference_modules/
-│   ├── deepagents/
-│   └── microsandbox-executor/
-└── AGENTS.md
+├── backend/                # FastAPI application & LangGraph logic
+│   ├── app/
+│   │   ├── agent/          # Agent graph, models, and tools
+│   │   ├── api/            # API routes (chat, files, threads)
+│   │   ├── db/             # Database schemas & repositories
+│   │   └── storage/        # Storage service integration (MinIO)
+│   └── tests/              # Backend test suite
+├── frontend/               # React/Vite frontend application
+│   ├── src/
+│   │   ├── components/     # UI components (shadcn/ui)
+│   │   ├── store/          # Frontend state management
+│   │   └── types/          # TypeScript definitions
+├── microsandbox-executor/  # Isolated execution control plane
+├── docker-compose.yml      # Infrastructure orchestration
+└── justfile                # Project command orchestration
 ```
 
-Notes:
+## Logic Flows
 
-- `microsandbox-executor/` is the working execution service in this repo
-- `reference_modules/deepagents/` is a local reference checkout used during design and integration work
-- `reference_modules/microsandbox-executor/` is retained as historical reference material
+The following diagram illustrates the lifecycle of a user request from message submission to code execution and response streaming.
 
-## Local Infrastructure
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant B as Backend
+    participant A as Agent (LangGraph)
+    participant S as Sandbox
 
-Phase 1 infrastructure is defined in [docker-compose.yml](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/docker-compose.yml).
-
-It currently provisions:
-
-- Postgres
-- MinIO
-- Redis
-- an init job that ensures the MinIO bucket exists
-
-To get started locally:
-
-```bash
-cp .env.example .env
-docker compose up -d
+    U->>F: Send Message / Upload File
+    F->>B: POST /api/v1/chat
+    B->>A: Invoke Agent Graph
+    A->>A: Reason & Plan
+    opt Code Execution
+        A->>S: POST /execute (Python Code)
+        S-->>A: stdout / stderr / Results
+    end
+    A-->>B: Stream Tokens & Tool Outputs (SSE)
+    B-->>F: Update UI state
+    F-->>U: Display response & Artifacts
 ```
 
-Default local endpoints:
+## Installation & Setup
 
-- Postgres: `localhost:5432`
-- MinIO API: `localhost:9000`
-- MinIO console: `localhost:9001`
-- Redis: `localhost:6379`
+### Prerequisites
 
-This infrastructure is intended to be shared by the upcoming `backend/` app and the existing `microsandbox-executor/` service.
+- [Docker & Docker Compose](https://www.docker.com/)
+- [just](https://github.com/casey/just) (command runner)
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+- [pnpm](https://pnpm.io/) (Node package manager)
 
-## Planned Backend Responsibilities
+### Quick Start
 
-The backend will be the public API surface for the product.
+1. **Clone and Setup Environment**:
+   ```bash
+   cp .env.example .env
+   ```
 
-It will handle:
+2. **Initialize Infrastructure**:
+   ```bash
+   just up
+   ```
 
-- authentication and user context
-- thread creation and ownership checks
-- presigned MinIO upload/download URLs
-- file metadata registration
-- backend-owned SSE streaming for agent runs
-- durable run metadata and run history
-- mapping `thread_id -> sandbox_session_id`
+3. **Install Dependencies**:
+   ```bash
+   just setup
+   ```
 
-The browser should not talk directly to MinIO or to the sandbox executor.
+4. **Start the Application**:
+   ```bash
+   just start
+   ```
 
-## Storage Model
+The application will be available at:
+- **Frontend**: `http://localhost:5173`
+- **Backend API**: `http://localhost:8000/docs`
+- **MinIO Console**: `http://localhost:9001`
 
-### Postgres
+## Usage Examples
 
-Postgres will store:
+### Data Analysis Request
+**User:** "Analyze `sales_2023.csv` and show me the monthly revenue trend."
 
-- users
-- threads
-- file and artifact metadata
-- sandbox session mappings
-- LangGraph runtime state
-
-### MinIO
-
-MinIO will store:
-
-- uploaded user files
-- generated artifacts such as CSVs, PNGs, SVGs, HTML reports, and logs
-
-The backend will mint short-lived presigned URLs for uploads and downloads after validating user and thread ownership.
-
-## Frontend Direction
-
-The frontend is not the current focus and will be built later from scratch.
-
-The intended product UI is:
-
-- chat-first
-- artifact-forward
-- file upload aware
-- streaming aware
-
-The primary interaction is not a manual code editor. The primary interaction is conversation plus artifact preview.
+**Agent Action:**
+1. Loads file from MinIO workspace.
+2. Generates Python code using `pandas` and `matplotlib`.
+3. Executes code in the isolated sandbox.
+4. Returns a trend analysis text and a generated `revenue_trend.png` artifact.
 
 ## References
 
-- DeepAgents: [https://github.com/langchain-ai/deepagents](https://github.com/langchain-ai/deepagents)
-- microsandbox: [https://github.com/superradcompany/microsandbox](https://github.com/superradcompany/microsandbox)
-- Project plan: [implementation_plan.md](/Users/hari/Desktop/sandbox/deepagent-sandbox-poc/implementation_plan.md)
-
-## Next Steps
-
-1. Scaffold `backend/`
-2. Move `microsandbox-executor` to Postgres and MinIO-backed persistence
-3. Implement the custom DeepAgents sandbox backend
-4. Wire the agent into the backend-owned runtime
-5. Build the new frontend after the backend path is stable
+- [DeepAgents](https://github.com/langchain-ai/deepagents): Professional agent harness.
+- [microsandbox](https://github.com/superradcompany/microsandbox): MicroVM isolation layer.
+- [Project Plan](implementation_plan.md): Detailed roadmap and technical design.
