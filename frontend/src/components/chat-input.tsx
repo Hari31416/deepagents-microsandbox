@@ -77,15 +77,15 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   return (
     <div className="space-y-4">
       <div className="relative group">
-        <div className="absolute inset-0 bg-slate-400/10 blur-xl rounded-2xl group-focus-within:bg-slate-900/10 transition-colors" />
-        <div className="relative flex flex-col items-end gap-2 bg-background border border-border rounded-xl p-2 shadow-sm focus-within:ring-2 focus-within:ring-slate-950 focus-within:ring-offset-2 transition-all">
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-primary/50 to-primary/30 blur opacity-20 group-focus-within:opacity-40 transition-opacity rounded-2xl" />
+        <div className="relative flex flex-col items-end gap-2 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-slate-200/50 dark:border-slate-800/50 rounded-2xl p-3 shadow-2xl focus-within:ring-1 focus-within:ring-primary/40 transition-all">
           <textarea
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={disabled}
-            placeholder="Describe your data or ask for an analysis..."
-            className="w-full bg-transparent border-none focus:ring-0 resize-none px-3 py-2 text-sm max-h-32 min-h-[40px]"
+            placeholder="Interrogate data or orchestrate an analysis..."
+            className="w-full bg-transparent border-none focus:ring-0 resize-none px-4 py-3 text-[15px] leading-relaxed max-h-48 min-h-[48px] placeholder:text-slate-400 dark:placeholder:text-slate-500 font-medium"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
@@ -94,8 +94,8 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
             }}
           />
           
-          <div className="flex items-center justify-between w-full px-2 pb-1">
-            <div className="flex items-center gap-1">
+          <div className="flex items-center justify-between w-full px-3 pb-1 pt-2 border-t border-slate-100 dark:border-slate-800/50">
+            <div className="flex items-center gap-1.5">
               <input 
                 type="file" 
                 ref={fileInputRef} 
@@ -106,28 +106,27 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8 text-slate-500 hover:text-slate-900"
+                className="h-9 w-9 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-xl transition-all"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={disabled || isUploading}
               >
-                {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                {isUploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Paperclip className="h-4.5 w-4.5" />}
               </Button>
-              <div className="text-[10px] text-slate-400 font-medium ml-2">
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest ml-3 hidden sm:block">
                 {uploadedFileIds.length > 0
-                  ? `${uploadedFileIds.length} workspace file${uploadedFileIds.length === 1 ? "" : "s"} available • `
-                  : ""}
-                Markdown supported • Shift+Enter for new line
+                  ? `${uploadedFileIds.length} files staged`
+                  : "Staging ready"}
               </div>
             </div>
             
             <Button 
               size="sm" 
-              className="h-8 rounded-lg gap-2 bg-slate-900 hover:bg-slate-800 text-white transition-all active:scale-95"
+              className="h-10 px-6 rounded-xl gap-2.5 bg-slate-900 dark:bg-primary hover:bg-slate-800 dark:hover:bg-primary/90 text-white shadow-lg shadow-primary/20 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
               onClick={handleSend}
               disabled={disabled || !input.trim()}
             >
-              <span className="text-xs font-semibold">Send Message</span>
-              <Send className="h-3.5 w-3.5" />
+              <span className="text-xs font-black uppercase tracking-widest">Execute</span>
+              <Send className="h-4 w-4" />
             </Button>
           </div>
         </div>

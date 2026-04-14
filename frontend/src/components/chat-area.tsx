@@ -16,9 +16,19 @@ import {
   Terminal,
   User as UserIcon,
   Wrench,
+  ChevronDown,
+  ListTodo,
+  Circle,
+  CircleDashed,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { motion, AnimatePresence } from "framer-motion"
+
+interface Todo {
+  content: string
+  status: "pending" | "in_progress" | "completed" | "failed"
+}
 
 interface StreamActivity {
   id: string
@@ -55,7 +65,6 @@ export function ChatArea() {
   const activeThread = threads.find((thread) => thread.thread_id === activeThreadId)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
   
   useEffect(() => {
     if (bottomRef.current) {
@@ -173,14 +182,18 @@ export function ChatArea() {
         if (event.event === "updates") {
           const streamState = extractStreamState(event.data)
           updateAssistantMessage(threadId, assistantMsgId, (message) => {
-            // Only use content from updates if we don't have enough content from deltas yet
-            // or if the update content is significantly longer/different
             const currentContent = message.content || ""
             const updateContent = streamState.content || ""
             
+            // Only update content if we don't have a streaming delta version
+            // or if the update provides a significantly cleaner/final version
             let nextContent = currentContent
-            if (updateContent && (updateContent.length > currentContent.length || !currentContent)) {
-               nextContent = updateContent
+            if (updateContent && (!currentContent || updateContent.length > currentContent.length)) {
+              // Heuristic: check if updateContent looks like raw tool output (CSV, JSON, etc)
+              const looksLikeRawData = /^[\[\{]|CUST_ID|BALANCE|original_filename/.test(updateContent)
+              if (!looksLikeRawData) {
+                nextContent = updateContent
+              }
             }
 
             return {
@@ -188,6 +201,25 @@ export function ChatArea() {
               activities: mergeActivities(message.activities, streamState.activities),
             }
           })
+          continue
+        }
+
+        if (event.event === "message" || event.event === "delta") {
+          const deltaData = typeof event.data === "string" ? { delta: event.data } : event.data
+          const delta = deltaData?.delta || ""
+          const metadata = deltaData?.metadata || {}
+
+          // Hide deltas that come from internal nodes or non-assistant roles
+          const node = metadata?.langgraph_node || ""
+          if (node === "tools" || node === "task" || node === "write_todos") {
+            continue
+          }
+
+          if (delta) {
+            updateAssistantMessage(threadId, assistantMsgId, (message) => ({
+              content: `${message.content}${delta}`,
+            }))
+          }
           continue
         }
 
@@ -205,17 +237,6 @@ export function ChatArea() {
             }),
           }))
           continue
-        }
-
-        if (event.event === "message" || event.event === "delta") {
-          const delta = typeof event.data === "string" ? event.data : event.data?.delta || event.rawData
-          if (!delta) {
-            continue
-          }
-
-          updateAssistantMessage(threadId, assistantMsgId, (message) => ({
-            content: `${message.content}${delta}`,
-          }))
         }
 
         if (event.event === "done") {
@@ -272,63 +293,75 @@ export function ChatArea() {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50/50 dark:bg-[#0b0c10]/50 relative">
-      <header className="h-14 border-b border-border bg-background/80 backdrop-blur-sm px-6 flex items-center justify-between sticky top-0 z-10">
+    <div className="flex-1 flex flex-col h-full bg-slate-50/30 dark:bg-black/20 relative">
+      <header className="h-16 border-b border-border/50 bg-background/60 backdrop-blur-xl px-8 flex items-center justify-between sticky top-0 z-20">
         <div className="flex flex-col min-w-0">
-          <h2 className="text-sm font-semibold truncate">{activeThread?.title || "Untitled Conversation"}</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-400">Thread ID: {activeThreadId}</span>
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-bold tracking-tight truncate">{activeThread?.title || "Untitled Conversation"}</h2>
             <Badge
               variant="outline"
-              className="text-[9px] h-4 py-0 px-1 font-normal uppercase tracking-wider bg-slate-100/50"
+              className="text-[9px] h-4 py-0 px-1.5 font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
             >
-              Active
+              Live
             </Badge>
           </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] text-slate-400 font-mono">ID: {truncateMiddle(activeThreadId, 16)}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-slate-900">
-            <Info className="h-4 w-4" />
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-full transition-all">
+            <Info className="h-4.5 w-4.5" />
           </Button>
         </div>
       </header>
 
       <ScrollArea className="flex-1 h-full">
-        <div className="max-w-3xl mx-auto py-8 px-6 space-y-8">
+        <div className="max-w-4xl mx-auto py-10 px-8 space-y-12">
           {activeMessages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-              <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
-                <Terminal className="h-8 w-8 text-slate-900 dark:text-slate-50" />
+            <div className="flex flex-col items-center justify-center py-32 text-center space-y-6">
+              <div className="relative">
+                <div className="absolute inset-0 bg-primary/20 blur-3xl rounded-full" />
+                <div className="relative w-20 h-20 rounded-[2.5rem] bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-2xl shadow-primary/20 animate-float">
+                  <Terminal className="h-10 w-10 text-white" />
+                </div>
               </div>
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold tracking-tight">How can I help you today?</h3>
-                <p className="text-sm text-slate-500 max-w-sm">
-                  Upload your data files, ask for analyses, or have me create custom charts in the sandbox environment.
+              <div className="space-y-3">
+                <h3 className="text-2xl font-black tracking-tight bg-gradient-to-br from-slate-900 to-slate-500 dark:from-white dark:to-slate-400 bg-clip-text text-transparent">Engineered to Assist</h3>
+                <p className="text-sm text-slate-500 max-w-sm leading-relaxed">
+                  Start an analysis by uploading datasets or asking a question. I'll leverage the sandbox to execute code and visualize results.
                 </p>
               </div>
             </div>
           )}
-          {activeMessages.map((message) => (
-            <div
+          {activeMessages.map((message, idx) => (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: idx * 0.05 }}
               key={message.id}
               className={cn(
-                "flex gap-4",
-                message.role === "assistant"
-                  ? "bg-white/60 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-[0_20px_60px_-45px_rgba(15,23,42,0.7)]"
-                  : "",
+                "flex gap-6 items-start group",
+                message.role === "assistant" ? "flex-row" : "flex-row"
               )}
             >
               <div
                 className={cn(
-                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                  message.role === "assistant" ? "bg-slate-900 text-white" : "bg-white border border-border",
+                  "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg transition-transform group-hover:scale-105",
+                  message.role === "assistant"
+                    ? "bg-slate-900 dark:bg-primary text-white"
+                    : "bg-white dark:bg-slate-800 border border-border",
                 )}
               >
-                {message.role === "assistant" ? <Bot className="h-5 w-5" /> : <UserIcon className="h-4 w-4" />}
+                {message.role === "assistant" ? <Bot className="h-6 w-6" /> : <UserIcon className="h-5 w-5 text-slate-600 dark:text-slate-300" />}
               </div>
-              <div className="flex-1 min-w-0 space-y-3">
-                <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  {message.role === "assistant" ? "AI Agent" : "You"}
+              <div className="flex-1 min-w-0 space-y-4">
+                <div className={cn(
+                  "flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em]",
+                  message.role === "assistant" ? "text-primary" : "text-slate-400"
+                )}>
+                  {message.role === "assistant" ? "Intelligence Engine" : "Human Operator"}
+                  <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800/50" />
                 </div>
 
                 {message.role === "assistant" && (
@@ -339,34 +372,47 @@ export function ChatArea() {
                   />
                 )}
 
-                <div className="prose prose-sm prose-slate dark:prose-invert max-w-none prose-pre:bg-slate-900 prose-pre:text-slate-50">
+                <div className={cn(
+                  "prose prose-slate dark:prose-invert max-w-none transition-all",
+                  message.role === "assistant" ? "text-[15px] leading-relaxed" : "text-slate-700 dark:text-slate-300"
+                )}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {message.content || (message.isStreaming ? "_Thinking..._" : "")}
+                    {message.content || (message.isStreaming ? "" : "")}
                   </ReactMarkdown>
-                  {message.isStreaming && (
-                    <div className="flex items-center gap-2 text-slate-400 mt-2">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      <span className="text-[10px] animate-pulse">Generating response...</span>
+                  {message.isStreaming && !message.content && (
+                    <div className="flex items-center gap-3 text-primary animate-pulse py-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-xs font-bold tracking-widest uppercase">Initializing Neural Synthesis...</span>
                     </div>
                   )}
                 </div>
+
+                {message.isStreaming && message.content && (
+                  <div className="flex items-center gap-2 text-primary/60 border-t border-primary/10 pt-4 mt-4">
+                    <div className="flex gap-1">
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce" />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Streaming Output</span>
+                  </div>
+                )}
               </div>
-            </div>
+            </motion.div>
           ))}
-          <div ref={bottomRef} className="h-4" />
+          <div ref={bottomRef} className="h-20" />
         </div>
       </ScrollArea>
 
-      <div className="p-6 max-w-3xl mx-auto w-full sticky bottom-0">
-        <ChatInput onSend={handleSendMessage} disabled={isStreaming || isHydratingHistory} />
+      <div className="pb-10 pt-4 px-8 max-w-4xl mx-auto w-full sticky bottom-0 z-20">
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent -top-12 pointer-events-none" />
+        <div className="relative">
+          <ChatInput onSend={handleSendMessage} disabled={isStreaming || isHydratingHistory} />
+        </div>
       </div>
     </div>
   )
 }
-
-import { ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react"
-import { motion, AnimatePresence } from "framer-motion"
-
 function LiveTrace({
   activities,
   runId,
@@ -386,110 +432,147 @@ function LiveTrace({
   const filteredActivities = activities.filter(a => a.label !== "Draft response updated")
 
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(135deg,rgba(248,250,252,0.98),rgba(241,245,249,0.84))] dark:bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.9))] shadow-[0_20px_40px_-32px_rgba(15,23,42,0.9)] overflow-hidden transition-all duration-300">
+    <div className="group/trace relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm shadow-xl shadow-slate-200/50 dark:shadow-none transition-all">
       <div 
-        className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors"
+        className="flex items-center justify-between gap-4 px-5 py-3.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center gap-2.5 text-[10px] uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400 font-bold">
+        <div className="flex items-center gap-3">
           <div className="relative">
-            <Radio className={cn("h-3.5 w-3.5", isStreaming && "animate-pulse text-emerald-600")} />
+            <div className={cn(
+              "w-2 h-2 rounded-full",
+              isStreaming ? "bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-300 dark:bg-slate-600"
+            )} />
             {isStreaming && (
-              <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
+              <div className="absolute inset-0 bg-emerald-500/30 rounded-full animate-ping" />
             )}
           </div>
-          Live Trace
-        </div>
-        <div className="flex items-center gap-3">
-          {runId && (
-            <div className="text-[10px] text-slate-400 font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
-              {truncateMiddle(runId, 12)}
-            </div>
+          <span className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">
+            Internal Reasoning
+          </span>
+          {filteredActivities.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[9px] font-bold text-slate-400">
+              {filteredActivities.length}
+            </span>
           )}
-          <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full text-slate-400 p-0">
-            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </Button>
+        </div>
+        <div className="flex items-center gap-4">
+          {runId && (
+            <span className="text-[10px] font-mono text-slate-400 bg-slate-100/50 dark:bg-slate-800/50 px-2 py-0.5 rounded border border-slate-200/50 dark:border-slate-700/50 hidden sm:inline-block">
+              {truncateMiddle(runId, 24)}
+            </span>
+          )}
+          <div className={cn(
+            "p-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 transition-transform duration-300",
+            isExpanded ? "rotate-0" : "-rotate-90"
+          )}>
+            <ChevronDown className="h-3.5 w-3.5" />
+          </div>
         </div>
       </div>
 
       <AnimatePresence>
         {isExpanded && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            initial={{ height: 0 }}
+            animate={{ height: "auto" }}
+            exit={{ height: 0 }}
+            className="overflow-hidden"
           >
-            <div className="px-3 pb-3 pt-1 space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
+            <div className="p-4 pt-1 space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar bg-slate-50/30 dark:bg-slate-950/20 border-t border-slate-100 dark:border-slate-800/50">
               {filteredActivities.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-800 px-4 py-3 text-xs text-slate-400 text-center italic">
-                  Waiting for events...
+                <div className="flex flex-col items-center justify-center py-6 text-slate-400 gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin opacity-50" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest animate-pulse">Syncing events...</span>
                 </div>
               ) : (
-                filteredActivities.map((activity) => (
-                  <div
-                    key={activity.id}
-                    className={cn(
-                      "group relative flex flex-col gap-2 rounded-xl border p-3 transition-all duration-200",
-                      activity.state === "error"
-                        ? "border-rose-200 bg-rose-50/50 dark:border-rose-900/30 dark:bg-rose-950/20"
-                        : activity.state === "done"
-                          ? "border-emerald-100 bg-emerald-50/30 dark:border-emerald-900/20 dark:bg-emerald-950/10"
-                          : "border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/60 shadow-sm",
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="mt-0.5 shrink-0 p-1.5 rounded-lg bg-white/80 dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700">
-                        {getActivityIcon(activity)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                          {activity.label}
-                          {activity.state === "live" && (
-                            <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                          )}
-                        </div>
-                        {activity.detail && !activity.args && !activity.result && (
-                          <div className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 break-words line-clamp-2 group-hover:line-clamp-none transition-all">
-                            {activity.detail}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                  <div className="relative pl-3 space-y-4">
+                    <div className="absolute left-[13px] top-2 bottom-4 w-px bg-slate-200 dark:bg-slate-800" />
 
-                    <div className="space-y-2 ml-10">
-                      {activity.args && (
-                        <div className="rounded-lg bg-slate-900/5 dark:bg-slate-50/5 border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-                          <div className="flex items-center justify-between px-2 py-1 bg-slate-100 dark:bg-slate-800 border-b border-slate-200/50 dark:border-slate-700/50">
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Input Parameters</span>
-                            <div className="flex gap-1">
-                               <div className="h-1.5 w-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
-                               <div className="h-1.5 w-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
+                    {filteredActivities.map((activity, idx) => (
+                      <motion.div
+                        key={activity.id}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.03 }}
+                        className="relative pl-8"
+                      >
+                        <div className={cn(
+                          "absolute left-0 top-1 w-2.5 h-2.5 rounded-full border-2 bg-white dark:bg-slate-900 z-10",
+                          activity.state === "live" ? "border-primary animate-pulse" :
+                            activity.state === "error" ? "border-rose-500" : "border-slate-300 dark:border-slate-700"
+                        )} />
+
+                        <div className={cn(
+                          "rounded-xl border p-4 transition-all hover:shadow-md",
+                          activity.state === "error"
+                            ? "bg-rose-50/50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/30 shadow-rose-100/20"
+                            : activity.state === "done" && activity.kind === "tool_result"
+                              ? "bg-emerald-50/30 border-emerald-100 dark:bg-emerald-950/10 dark:border-emerald-900/20 shadow-emerald-100/10"
+                              : "bg-white/80 dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-sm"
+                        )}>
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className={cn(
+                              "p-1.5 rounded-lg",
+                              activity.kind === "tool_call" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" :
+                                activity.kind === "tool_result" ? "bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400" :
+                                  "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                            )}>
+                              {getActivityIcon(activity)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] font-black tracking-tight text-slate-800 dark:text-slate-200">
+                                {activity.label}
+                              </div>
+                              {activity.state === "live" && (
+                                <div className="text-[9px] text-primary font-bold uppercase tracking-widest animate-pulse mt-0.5">
+                                  Active Processing
+                                </div>
+                              )}
                             </div>
                           </div>
-                          <div className="p-2 text-[10px] font-mono leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto bg-white/40 dark:bg-black/20">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.args}</ReactMarkdown>
-                          </div>
-                        </div>
-                      )}
 
-                      {activity.result && (
-                        <div className="rounded-lg bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 dark:border-emerald-500/20 overflow-hidden">
-                          <div className="flex items-center justify-between px-2 py-1 bg-emerald-50/50 dark:bg-emerald-950/30 border-b border-emerald-500/10 dark:border-emerald-500/10 text-emerald-700 dark:text-emerald-400">
-                            <span className="text-[9px] font-bold uppercase tracking-wider">Execution Result</span>
-                            <CheckCircle2 className="h-2.5 w-2.5" />
-                          </div>
-                          <div className="p-2 text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 bg-white/30 dark:bg-white/5">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.result}</ReactMarkdown>
+                          {activity.label.includes("write_todos") && activity.args && (
+                            <div className="mt-2">
+                              <TodoList todos={parseTodos(activity.args)} />
+                            </div>
+                          )}
+
+                          {activity.detail && !activity.args && !activity.result && !activity.label.includes("write_todos") && (
+                            <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 break-words line-clamp-2">
+                              {activity.detail}
+                            </p>
+                          )}
+
+                          <div className="space-y-3">
+                            {activity.args && !activity.label.includes("write_todos") && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">
+                                  <Terminal className="h-2.5 w-2.5" />
+                                  Parameters
+                                </div>
+                                <div className="rounded-lg bg-slate-950 p-3 text-[10px] font-mono leading-relaxed text-slate-300 overflow-x-auto border border-slate-800/50">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.args}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
+
+                            {activity.result && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.15em] text-sky-500 dark:text-sky-400">
+                                  <CheckCircle2 className="h-2.5 w-2.5" />
+                                  Output Result
+                                </div>
+                                <div className="rounded-lg bg-slate-100 dark:bg-slate-950/50 p-3 text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 border border-slate-200/50 dark:border-slate-800/50 max-h-48 overflow-y-auto custom-scrollbar">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.result}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      )}
-                    </div>
+                      </motion.div>
+                    ))}
                   </div>
-                ))
               )}
             </div>
           </motion.div>
@@ -497,6 +580,62 @@ function LiveTrace({
       </AnimatePresence>
     </div>
   )
+}
+
+function TodoList({ todos }: { todos: Todo[] }) {
+  if (!todos.length) return null
+
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+      <div className="bg-slate-50 dark:bg-slate-800/50 px-3 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
+        <ListTodo className="h-3.5 w-3.5 text-primary" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Plan of Action</span>
+      </div>
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {todos.map((todo, idx) => (
+          <div key={idx} className="px-3 py-2.5 flex items-start gap-3 group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+            <div className="mt-0.5 shrink-0">
+              {todo.status === "completed" ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              ) : todo.status === "in_progress" ? (
+                <CircleDashed className="h-4 w-4 text-primary animate-spin" />
+              ) : todo.status === "failed" ? (
+                <Info className="h-4 w-4 text-rose-500" />
+              ) : (
+                <Circle className="h-4 w-4 text-slate-300 dark:text-slate-600" />
+              )}
+            </div>
+            <div className={cn(
+              "text-xs leading-tight transition-colors",
+              todo.status === "completed" ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-300 font-medium"
+            )}>
+              {todo.content}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function parseTodos(args: string): Todo[] {
+  try {
+    // Attempt to extract JSON from code blocks if present
+    const jsonMatch = args.match(/```(?:json)?\s*([\s\S]*?)```/)
+    const raw = jsonMatch ? jsonMatch[1] : args
+    const parsed = JSON.parse(raw)
+
+    const todos = Array.isArray(parsed) ? parsed : parsed.todos
+    if (Array.isArray(todos)) {
+      return todos.map((t: any) => ({
+        content: t.content || t.task || t.description || "Unknown Task",
+        status: t.status || "pending"
+      }))
+    }
+  } catch (err) {
+    console.error("Failed to parse todos:", err)
+  }
+  return []
 }
 
 function getActivityIcon(activity: StreamActivity) {

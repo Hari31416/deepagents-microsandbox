@@ -5,7 +5,7 @@ import type { ThreadFile } from "@/lib/api-client"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileIcon, ImageIcon, FileSpreadsheet, Download, ExternalLink, RefreshCw, FolderOpen } from "lucide-react"
+import { FileIcon, ImageIcon, FileSpreadsheet, Download, RefreshCw, FolderOpen, Radio } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function SidePanel() {
@@ -53,32 +53,36 @@ export function SidePanel() {
   if (!activeThreadId) return null
 
   return (
-    <aside className="w-80 border-l border-border bg-card flex flex-col h-full overflow-hidden">
-      <div className="p-4 border-b border-border bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
-        <div className="flex items-center gap-2 font-semibold text-xs tracking-wider uppercase text-slate-500">
-          <FolderOpen className="h-4 w-4" />
+    <aside className="w-80 border-l border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl flex flex-col h-full overflow-hidden relative z-30">
+      <div className="p-6 border-b border-border/50 flex items-center justify-between">
+        <div className="flex items-center gap-3 font-black text-[10px] tracking-[0.2em] uppercase text-slate-500">
+          <div className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800">
+            <FolderOpen className="h-3.5 w-3.5" />
+          </div>
           Workspace
         </div>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchFiles} disabled={isLoading}>
-          <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-primary/5 hover:text-primary transition-all" onClick={fetchFiles} disabled={isLoading}>
+          <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
         </Button>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-4 pt-4">
-          <TabsList className="grid w-full grid-cols-2 h-8">
-            <TabsTrigger value="files" className="text-[10px] uppercase font-bold tracking-tighter">Files</TabsTrigger>
-            <TabsTrigger value="artifacts" className="text-[10px] uppercase font-bold tracking-tighter">Artifacts</TabsTrigger>
+        <div className="px-6 pt-6">
+          <TabsList className="grid w-full grid-cols-2 h-10 bg-slate-100/50 dark:bg-slate-900/50 rounded-xl p-1 border border-slate-200/50 dark:border-slate-800/50">
+            <TabsTrigger value="files" className="text-[10px] uppercase font-black tracking-widest rounded-lg data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 data-[state=active]:shadow-sm">Files</TabsTrigger>
+            <TabsTrigger value="artifacts" className="text-[10px] uppercase font-black tracking-widest rounded-lg data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 data-[state=active]:shadow-sm">Artifacts</TabsTrigger>
           </TabsList>
         </div>
 
         <TabsContent value="files" className="flex-1 overflow-hidden mt-0">
-          <ScrollArea className="h-full px-4 py-4">
-            <div className="space-y-2">
+          <ScrollArea className="h-full px-6 py-6">
+            <div className="space-y-3">
               {files.filter(f => f.purpose === "upload").length === 0 ? (
-                <div className="py-20 text-center text-slate-400">
-                   <FileIcon className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                   <p className="text-[10px] uppercase font-semibold">No uploads yet</p>
+                <div className="py-24 text-center space-y-4">
+                  <div className="w-16 h-16 rounded-[2rem] bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 flex items-center justify-center mx-auto opacity-40">
+                    <FileIcon className="h-8 w-8 text-slate-400" />
+                  </div>
+                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">No uploads staged</p>
                 </div>
               ) : (
                 files.filter(f => f.purpose === "upload").map(file => (
@@ -90,12 +94,14 @@ export function SidePanel() {
         </TabsContent>
 
         <TabsContent value="artifacts" className="flex-1 overflow-hidden mt-0">
-          <ScrollArea className="h-full px-4 py-4">
-            <div className="space-y-2">
+          <ScrollArea className="h-full px-6 py-6">
+            <div className="space-y-3">
               {files.filter(f => f.purpose !== "upload").length === 0 ? (
-                <div className="py-20 text-center text-slate-400">
-                   <Download className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                   <p className="text-[10px] uppercase font-semibold">No generated artifacts</p>
+                <div className="py-24 text-center space-y-4">
+                  <div className="w-16 h-16 rounded-[2rem] bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 flex items-center justify-center mx-auto opacity-40">
+                    <Download className="h-8 w-8 text-slate-400" />
+                  </div>
+                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Zero artifacts generated</p>
                 </div>
               ) : (
                 files.filter(f => f.purpose !== "upload").map(file => (
@@ -107,10 +113,17 @@ export function SidePanel() {
         </TabsContent>
       </Tabs>
       
-      <div className="p-4 border-t border-border bg-slate-50/30">
-         <div className="rounded-lg bg-blue-50 dark:bg-blue-900/20 p-3 border border-blue-100 dark:border-blue-800">
-            <h4 className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-widest mb-1">Sandbox Status</h4>
-            <p className="text-[10px] text-blue-600 dark:text-blue-300 leading-tight">Environment is ready for execution. File isolation is active.</p>
+      <div className="p-6 mt-auto">
+        <div className="relative rounded-2xl overflow-hidden bg-primary/5 border border-primary/10 p-5 group transition-all hover:bg-primary/10 shadow-lg shadow-primary/5">
+          <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+            <Radio className="h-12 w-12 text-primary" />
+          </div>
+          <h4 className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-2">Sandbox Cluster</h4>
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed font-medium">Environment fully provisioned. Compute nodes active for secure file synthesis and analysis.</p>
+          <div className="mt-4 flex items-center gap-2">
+            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">System Healthy</span>
+          </div>
          </div>
       </div>
     </aside>
@@ -119,19 +132,19 @@ export function SidePanel() {
 
 function FileItem({ file, onDownload, icon }: { file: ThreadFile, onDownload: () => void, icon: React.ReactNode }) {
   return (
-    <div className="group flex items-center justify-between p-2 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+    <div className="group flex items-center justify-between p-3 rounded-2xl border border-slate-100 dark:border-slate-800/50 hover:border-primary/20 hover:bg-white dark:hover:bg-slate-900/60 transition-all shadow-sm hover:shadow-md">
+      <div className="flex items-center gap-4 min-w-0">
+        <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-primary transition-colors shrink-0">
           {icon}
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="text-xs font-medium truncate">{file.original_filename}</span>
-          <span className="text-[10px] text-slate-400">{(file.size / 1024).toFixed(1)} KB • {new Date(file.created_at).toLocaleDateString()}</span>
+          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate mb-0.5">{file.original_filename}</span>
+          <span className="text-[10px] text-slate-400 font-mono">{(file.size / 1024).toFixed(1)} KB • {new Date(file.created_at).toLocaleDateString()}</span>
         </div>
       </div>
-      <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onDownload}>
-          <ExternalLink className="h-3.5 w-3.5" />
+      <div className="flex items-center opacity-0 group-hover:opacity-100 transition-all scale-90 group-hover:scale-100">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl text-slate-400 hover:text-primary hover:bg-primary/10 transition-all" onClick={onDownload}>
+          <Download className="h-4 w-4" />
         </Button>
       </div>
     </div>
