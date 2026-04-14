@@ -90,6 +90,17 @@ class ThreadRepository:
             statement = select(Thread).where(Thread.id == thread_id, Thread.owner_id == owner_id)
             return session.scalar(statement)
 
+    def update_title(self, *, owner_id: str, thread_id: str, title: str) -> Thread | None:
+        with self._session_factory() as session:
+            statement = select(Thread).where(Thread.id == thread_id, Thread.owner_id == owner_id)
+            record = session.scalar(statement)
+            if record is None:
+                return None
+            record.title = title
+            session.commit()
+            session.refresh(record)
+            return record
+
     @staticmethod
     def _ensure_user(*, session, user_id: str) -> None:
         existing = session.get(User, user_id)
@@ -151,6 +162,35 @@ class FileRepository:
                 ThreadFile.id.in_(file_ids)
             )
             return list(session.scalars(statement))
+
+    def get_file_by_object_key(self, *, thread_id: str, object_key: str) -> ThreadFile | None:
+        with self._session_factory() as session:
+            statement = select(ThreadFile).where(
+                ThreadFile.thread_id == thread_id,
+                ThreadFile.object_key == object_key,
+            )
+            return session.scalar(statement)
+
+    def update_file(
+        self,
+        *,
+        thread_id: str,
+        file_id: str,
+        content_type: str,
+        size: int,
+        status: str,
+    ) -> ThreadFile:
+        with self._session_factory() as session:
+            statement = select(ThreadFile).where(ThreadFile.id == file_id, ThreadFile.thread_id == thread_id)
+            record = session.scalar(statement)
+            if record is None:
+                raise ValueError("File not found")
+            record.content_type = content_type
+            record.size = size
+            record.status = status
+            session.commit()
+            session.refresh(record)
+            return record
 
 
 class SandboxSessionRepository:

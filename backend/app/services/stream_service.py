@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from posixpath import basename
 from typing import TYPE_CHECKING, Any
 
 from app.agent.backend import MicrosandboxBackend
@@ -58,9 +59,17 @@ class StreamService:
         message: str,
         selected_file_ids: list[str],
     ) -> AsyncIterator[str]:
-        if self._thread_service.get_thread_for_owner(owner_id=owner_id, thread_id=thread_id) is None:
+        thread = self._thread_service.get_thread_for_owner(owner_id=owner_id, thread_id=thread_id)
+        if thread is None:
             yield _sse("error", {"detail": "Thread not found"})
             return
+
+        self._maybe_update_thread_title(
+            owner_id=owner_id,
+            thread_id=thread_id,
+            current_title=thread.get("title"),
+            message=message,
+        )
 
         user_message = self._message_service.create_message(
             thread_id=thread_id,
@@ -205,6 +214,11 @@ class StreamService:
                     delta_response_content=delta_response_content,
                     updated_response_content=updated_response_content,
                     latest_content_source=latest_content_source,
+                )
+                self._import_generated_artifacts(
+                    owner_id=owner_id,
+                    thread_id=thread_id,
+                    workspace_files=workspace_files,
                 )
                 self._run_service.complete_run(
                     run_id=str(run["run_id"]),
@@ -518,6 +532,124 @@ class StreamService:
         if updated_response_content is not None:
             return updated_response_content
         return delta_response_content
+
+    def _maybe_update_thread_title(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        current_title: object,
+        message: str,
+    ) -> None:
+        existing_messages = self._message_service.list_messages(owner_id=owner_id, thread_id=thread_id)
+        if existing_messages:
+            return
+
+        normalized_title = self._derive_thread_title(message)
+        current_title_text = str(current_title or "").strip()
+        if current_title_text and current_title_text not in {"New Conversation", "Untitled Chat"}:
+            return
+
+        self._thread_service.update_thread_title(
+            owner_id=owner_id,
+            thread_id=thread_id,
+            title=normalized_title,
+        )
+
+    @staticmethod
+    def _derive_thread_title(message: str, max_length: int = 80) -> str:
+        normalized = " ".join(message.split()).strip()
+        if not normalized:
+            return "New Conversation"
+        if len(normalized) <= max_length:
+            return normalized
+        return f"{normalized[: max_length - 1].rstrip()}…"
+
+    def _import_generated_artifacts(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        workspace_files: list[dict[str, Any]],
+    ) -> None:
+        backend = self._sandbox_backend_factory(
+            executor_base_url=self._settings.executor_base_url,
+            thread_id=thread_id,
+            user_id=owner_id,
+        )
+        existing_upload_names = {
+            str(file.get("original_filename"))
+            for file in workspace_files
+            if file.get("original_filename")
+        }
+
+        try:
+            session_files = backend.list_files()
+        except Exception:
+            logger.exception("Failed to list sandbox session files for thread %s", thread_id)
+            return
+
+        artifact_paths: list[str] = []
+        for file in session_files:
+            relative_path = str(file.get("path") or "").strip()
+            if not relative_path:
+                continue
+            if relative_path in existing_upload_names:
+                continue
+            if basename(relative_path) in existing_upload_names and "/" not in relative_path:
+                continue
+            artifact_paths.append(relative_path)
+
+        if not artifact_paths:
+            return
+
+        downloads = backend.download_files(artifact_paths)
+        for download in downloads:
+            if getattr(download, "error", None):
+                logger.warning(
+                    "Skipping artifact import for %s on thread %s: %s",
+                    download.path,
+                    thread_id,
+                    download.error,
+                )
+                continue
+            if download.content is None:
+                continue
+
+            content_type = self._content_type_for_path(download.path)
+            try:
+                self._file_service.import_artifact(
+                    owner_id=owner_id,
+                    thread_id=thread_id,
+                    relative_path=download.path,
+                    content=download.content,
+                    content_type=content_type,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to import generated artifact %s for thread %s",
+                    download.path,
+                    thread_id,
+                )
+
+    @staticmethod
+    def _content_type_for_path(path: str) -> str | None:
+        normalized = path.lower()
+        if normalized.endswith(".png"):
+            return "image/png"
+        if normalized.endswith(".jpg") or normalized.endswith(".jpeg"):
+            return "image/jpeg"
+        if normalized.endswith(".svg"):
+            return "image/svg+xml"
+        if normalized.endswith(".html"):
+            return "text/html; charset=utf-8"
+        if normalized.endswith(".csv"):
+            return "text/csv; charset=utf-8"
+        if normalized.endswith(".json"):
+            return "application/json"
+        if normalized.endswith(".txt") or normalized.endswith(".log") or normalized.endswith(".py"):
+            return "text/plain; charset=utf-8"
+        return None
 
     @classmethod
     def _extract_update_events(cls, payload: object) -> list[dict[str, object]]:

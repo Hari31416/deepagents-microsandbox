@@ -154,6 +154,14 @@ class MicrosandboxBackend(BaseSandbox):
 
         return downloads
 
+    def list_files(self) -> list[dict[str, object]]:
+        self._ensure_session()
+        response = self._client.get(f"/v1/sessions/{self._session_id}/files")
+        response.raise_for_status()
+        payload = response.json()
+        files = payload.get("files", [])
+        return [file for file in files if isinstance(file, dict)]
+
     def _ensure_session(self) -> None:
         response = self._client.post("/v1/sessions", json={"session_id": self._session_id})
         if response.status_code not in {201, 409}:

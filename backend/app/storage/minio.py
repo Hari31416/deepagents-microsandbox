@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from uuid import uuid4
 
 from minio import Minio
@@ -60,6 +61,15 @@ class MinioStorage:
         finally:
             response.close()
             response.release_conn()
+
+    def put_object(self, object_key: str, content: bytes, content_type: str | None = None) -> None:
+        self._client.put_object(
+            self.bucket_name,
+            object_key,
+            BytesIO(content),
+            length=len(content),
+            content_type=content_type or "application/octet-stream",
+        )
 
     @staticmethod
     def _expires_at(expires: timedelta) -> str:

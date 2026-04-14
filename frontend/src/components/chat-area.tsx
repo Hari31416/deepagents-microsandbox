@@ -44,7 +44,7 @@ interface StreamEnvelope {
 }
 
 export function ChatArea() {
-  const { activeThreadId, threads } = useStore()
+  const { activeThreadId, threads, updateThreadTitle, setThreadFiles } = useStore()
   const [messages, setMessages] = useState<Record<string, Message[]>>({})
   const [isStreaming, setIsStreaming] = useState(false)
   const [isHydratingHistory, setIsHydratingHistory] = useState(false)
@@ -116,6 +116,10 @@ export function ChatArea() {
     if (!activeThreadId) return
 
     const threadId = activeThreadId
+    const activeThreadRecord = threads.find((thread) => thread.thread_id === threadId)
+    if (shouldPromoteMessageToTitle(activeThreadRecord?.title)) {
+      updateThreadTitle(threadId, deriveThreadTitle(content))
+    }
     const userMsg: Message = {
       id: Math.random().toString(36).substring(7),
       role: "user",
@@ -196,6 +200,13 @@ export function ChatArea() {
         }
 
         if (event.event === "done") {
+          threadsApi.getFiles(threadId)
+            .then((data) => {
+              setThreadFiles(threadId, data.files)
+            })
+            .catch((error) => {
+              console.error("Failed to refresh files:", error)
+            })
           updateAssistantMessage(threadId, assistantMsgId, (message) => ({
             isStreaming: false,
             activities: upsertActivity(message.activities, {
@@ -374,8 +385,8 @@ function LiveTrace({
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-slate-800">{activity.label}</div>
                 {activity.detail ? (
-                  <div className="mt-1 text-[11px] leading-5 text-slate-500 whitespace-pre-wrap break-words">
-                    {activity.detail}
+                  <div className="mt-1 text-[11px] leading-5 text-slate-500 break-words prose prose-xs prose-slate max-w-none">
+                    <ReactMarkdown>{activity.detail}</ReactMarkdown>
                   </div>
                 ) : null}
               </div>
@@ -550,11 +561,19 @@ function summarizeArgs(args: unknown) {
   }
 
   if (typeof args === "string") {
-    return previewText(args)
+    return formatToolContent(args)
+  }
+
+  if (typeof args === "object") {
+    const record = args as Record<string, unknown>
+    const codeValue = firstStringValue(record, ["code", "script", "command", "cmd", "source"])
+    if (codeValue) {
+      return formatToolContent(codeValue, detectLanguage(record))
+    }
   }
 
   try {
-    return previewText(JSON.stringify(args))
+    return formatToolContent(JSON.stringify(args, null, 2), "json")
   } catch {
     return "Arguments unavailable"
   }
@@ -600,6 +619,84 @@ function extractErrorMessage(data: unknown, rawData: string) {
   }
 
   return rawData || "Stream failed"
+}
+
+function shouldPromoteMessageToTitle(title?: string | null) {
+  const normalized = (title || "").trim()
+  return !normalized || normalized === "New Conversation" || normalized === "Untitled Chat"
+}
+
+function deriveThreadTitle(message: string, maxLength = 80) {
+  const normalized = message.replace(/\s+/g, " ").trim()
+  if (!normalized) {
+    return "New Conversation"
+  }
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`
+}
+
+function formatToolContent(value: string, language?: string) {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return "No arguments"
+  }
+
+  if (!trimmed.includes("\n") && trimmed.length <= 160) {
+    return trimmed
+  }
+
+  const fenceLanguage = language || inferLanguage(trimmed)
+  return `\`\`\`${fenceLanguage}\n${trimmed}\n\`\`\``
+}
+
+function detectLanguage(record: Record<string, unknown>) {
+  const explicit =
+    firstStringValue(record, ["language", "lang", "runtime"]) ||
+    firstStringValue(record, ["interpreter", "shell"])
+  if (explicit) {
+    return normalizeLanguage(explicit)
+  }
+  return undefined
+}
+
+function inferLanguage(value: string) {
+  const normalized = value.trim()
+  if (normalized.startsWith("python") || normalized.includes("import ") || normalized.includes("def ")) {
+    return "python"
+  }
+  if (
+    normalized.startsWith("bash") ||
+    normalized.startsWith("sh ") ||
+    normalized.includes("&&") ||
+    normalized.includes("export ") ||
+    normalized.includes("pip ")
+  ) {
+    return "bash"
+  }
+  return ""
+}
+
+function normalizeLanguage(value: string) {
+  const normalized = value.trim().toLowerCase()
+  if (["python", "py"].includes(normalized)) {
+    return "python"
+  }
+  if (["bash", "sh", "shell", "zsh"].includes(normalized)) {
+    return "bash"
+  }
+  return normalized
+}
+
+function firstStringValue(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === "string" && value.trim()) {
+      return value
+    }
+  }
+  return undefined
 }
 
 function mapPersistedMessage(
@@ -717,7 +814,9 @@ function mapRunEventToActivity(event: ThreadRunEvent): StreamActivity | null {
 
   if (event.event_type === "tool_result") {
     const content =
-      typeof event.payload.content === "string" ? event.payload.content : JSON.stringify(event.payload.content)
+      typeof event.payload.content === "string"
+        ? formatToolContent(event.payload.content)
+        : formatToolContent(JSON.stringify(event.payload.content, null, 2), "json")
     return {
       id: event.correlation_id || event.event_id,
       kind: "tool_result",

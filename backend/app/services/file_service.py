@@ -1,4 +1,6 @@
 from dataclasses import asdict, dataclass
+from mimetypes import guess_type
+from posixpath import basename
 from typing import Any, Literal
 from app.db.repositories import FileRepository
 from app.storage.minio import MinioStorage
@@ -151,6 +153,55 @@ class FileService:
 
         content = self._storage.get_object(record.object_key)
         return record.filename, content
+
+    def import_artifact(
+        self,
+        *,
+        owner_id: str,
+        thread_id: str,
+        relative_path: str,
+        content: bytes,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        if not self._storage:
+            raise ValueError("Storage not configured")
+
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_owner(
+                owner_id=owner_id, thread_id=thread_id
+            )
+            if not thread:
+                raise ValueError("Thread not found")
+
+        normalized_path = relative_path.strip().lstrip("/")
+        if not normalized_path:
+            raise ValueError("Artifact path may not be empty")
+
+        artifact_content_type = content_type or guess_type(normalized_path)[0] or "application/octet-stream"
+        object_key = f"{thread_id}/artifacts/{normalized_path}"
+        self._storage.put_object(object_key, content, artifact_content_type)
+
+        existing = self._repository.get_file_by_object_key(thread_id=thread_id, object_key=object_key)
+        if existing is not None:
+            record = self._repository.update_file(
+                thread_id=thread_id,
+                file_id=existing.id,
+                content_type=artifact_content_type,
+                size=len(content),
+                status="completed",
+            )
+            return asdict(self._to_record(record))
+
+        record = self._repository.create_file(
+            thread_id=thread_id,
+            object_key=object_key,
+            filename=basename(normalized_path),
+            kind="artifact",
+            content_type=artifact_content_type,
+            size=len(content),
+            status="completed",
+        )
+        return asdict(self._to_record(record))
 
     @staticmethod
     def _to_record(record) -> FileRecord:
