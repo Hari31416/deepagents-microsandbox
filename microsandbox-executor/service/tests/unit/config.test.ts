@@ -21,8 +21,8 @@ test("loadConfig uses local session storage settings", () => {
   assert.equal(config.sessionCleanupIntervalSeconds, 10 * 60);
   assert.equal(config.maxUploadBytes, 20 * 1024 * 1024);
   assert.equal(config.maxFilesPerUpload, 10);
-  assert.equal(config.runtimeImages.default, "hari31416/sandbox-data-science:py312-v1");
-  assert.equal(config.runtimeImages["data-science"], "hari31416/sandbox-data-science:py312-v1");
+  assert.equal(config.runtimeImages.default, "hari31416/data-science-heavy-runtime:py312-v1");
+  assert.equal(config.runtimeImages["data-science"], "hari31416/data-science-heavy-runtime:py312-v1");
   assert.equal(config.enableRestrictedExec, false);
   assert.deepEqual(config.blockedImports, ["subprocess", "socket", "multiprocessing", "resource", "pty"]);
 });
