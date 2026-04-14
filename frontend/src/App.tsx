@@ -3,6 +3,7 @@ import { Sidebar } from "@/components/sidebar"
 import { ChatArea } from "@/components/chat-area"
 import { SidePanel } from "@/components/side-panel"
 import { useStore } from "@/store/use-store"
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { threadsApi } from "@/lib/api-client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -11,6 +12,8 @@ const queryClient = new QueryClient()
 
 function MainLayout() {
   const { setThreads, activeThreadId, setActiveThreadId } = useStore()
+
+  useKeyboardShortcuts()
 
   useEffect(() => {
     threadsApi.list().then((data) => {
