@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import chat, files, health, threads
+from app.api.routes import admin, auth, chat, files, health, threads
 from app.config import get_settings
 
 
@@ -14,6 +14,8 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router, prefix=settings.api_prefix)
+    app.include_router(auth.router, prefix=settings.api_prefix)
+    app.include_router(admin.router, prefix=settings.api_prefix)
     app.include_router(threads.router, prefix=settings.api_prefix)
     app.include_router(files.router, prefix=settings.api_prefix)
     app.include_router(chat.router, prefix=settings.api_prefix)

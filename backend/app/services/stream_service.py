@@ -23,7 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 _INTERNAL_NODES: frozenset[str] = frozenset(
-    {"write_todos", "task", "plan", "orchestrator", "planner", "tools", "__start__", "__end__"}
+    {
+        "write_todos",
+        "task",
+        "plan",
+        "orchestrator",
+        "planner",
+        "tools",
+        "__start__",
+        "__end__",
+    }
 )
 
 
@@ -59,18 +68,25 @@ class StreamService:
 
     async def stream_chat(
         self,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         message: str,
         selected_file_ids: list[str],
     ) -> AsyncIterator[str]:
-        thread = self._thread_service.get_thread_for_owner(owner_id=owner_id, thread_id=thread_id)
+        thread = self._thread_service.get_thread_for_actor(
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            thread_id=thread_id,
+        )
         if thread is None:
             yield _sse("error", {"detail": "Thread not found"})
             return
+        owner_id = str(thread["owner_id"])
 
         self._maybe_update_thread_title(
             owner_id=owner_id,
+            actor_role=actor_role,
             thread_id=thread_id,
             current_title=thread.get("title"),
             message=message,
@@ -87,7 +103,8 @@ class StreamService:
 
         try:
             workspace_files = self._resolve_workspace_files(
-                owner_id=owner_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
                 thread_id=thread_id,
                 selected_file_ids=selected_file_ids,
             )
@@ -109,8 +126,12 @@ class StreamService:
             return
 
         resolved_file_ids = [str(file["file_id"]) for file in workspace_files]
-        workspace_paths = [f"/workspace/{file['original_filename']}" for file in workspace_files]
-        input_message = self._build_input_message(message=message, workspace_files=workspace_files)
+        workspace_paths = [
+            f"/workspace/{file['original_filename']}" for file in workspace_files
+        ]
+        input_message = self._build_input_message(
+            message=message, workspace_files=workspace_files
+        )
         run = self._run_service.create_run(
             thread_id=thread_id,
             owner_id=owner_id,
@@ -199,14 +220,20 @@ class StreamService:
                         if event["event"] == "delta":
                             delta = str(event["data"].get("delta", ""))
                             if delta:
-                                delta_response_content = f"{delta_response_content}{delta}"
+                                delta_response_content = (
+                                    f"{delta_response_content}{delta}"
+                                )
                                 latest_content_source = "delta"
                         elif event["event"] == "updates":
-                            updated_content = self._extract_content_from_updates(event["data"])
+                            updated_content = self._extract_content_from_updates(
+                                event["data"]
+                            )
                             if updated_content is not None:
                                 updated_response_content = updated_content
                                 latest_content_source = "updates"
-                            for update_event in self._extract_update_events(event["data"]):
+                            for update_event in self._extract_update_events(
+                                event["data"]
+                            ):
                                 record_run_event(**update_event)
 
                         yield _sse(
@@ -221,7 +248,8 @@ class StreamService:
                     latest_content_source=latest_content_source,
                 )
                 self._import_generated_artifacts(
-                    owner_id=owner_id,
+                    actor_user_id=actor_user_id,
+                    actor_role=actor_role,
                     thread_id=thread_id,
                     workspace_files=workspace_files,
                 )
@@ -286,7 +314,11 @@ class StreamService:
                     "message_id": str(assistant_message_id),
                 },
             )
-            yield _sse("error", {"detail": detail, "run_id": run["run_id"]}, event_id=next_event_id())
+            yield _sse(
+                "error",
+                {"detail": detail, "run_id": run["run_id"]},
+                event_id=next_event_id(),
+            )
         except Exception as exc:
             logger.exception("Run %s failed for thread %s", run["run_id"], thread_id)
             detail = self._normalize_runtime_error(exc)
@@ -321,7 +353,11 @@ class StreamService:
                     "message_id": str(assistant_message_id),
                 },
             )
-            yield _sse("error", {"detail": detail, "run_id": run["run_id"]}, event_id=next_event_id())
+            yield _sse(
+                "error",
+                {"detail": detail, "run_id": run["run_id"]},
+                event_id=next_event_id(),
+            )
 
     async def _stream_graph_events(
         self,
@@ -376,7 +412,10 @@ class StreamService:
             node_name = metadata.get("langgraph_node", "")
             delta = self._extract_message_text(message_chunk)
             if delta:
-                yield {"event": "delta", "data": {"delta": delta, "node_name": node_name}}
+                yield {
+                    "event": "delta",
+                    "data": {"delta": delta, "node_name": node_name},
+                }
 
     def _build_input_message(
         self,
@@ -402,20 +441,29 @@ class StreamService:
     def _resolve_workspace_files(
         self,
         *,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         selected_file_ids: list[str],
     ) -> list[dict[str, Any]]:
         if selected_file_ids:
-            files = self._file_service.list_files_by_ids(thread_id=thread_id, file_ids=selected_file_ids)
+            files = self._file_service.list_files_by_ids(
+                thread_id=thread_id, file_ids=selected_file_ids
+            )
             files_by_id = {str(file["file_id"]): file for file in files}
-            missing_file_ids = [file_id for file_id in selected_file_ids if file_id not in files_by_id]
+            missing_file_ids = [
+                file_id for file_id in selected_file_ids if file_id not in files_by_id
+            ]
             if missing_file_ids:
                 missing = ", ".join(missing_file_ids)
                 raise ValueError(f"Selected files not found in thread: {missing}")
             ordered_files = [files_by_id[file_id] for file_id in selected_file_ids]
         else:
-            ordered_files = self._file_service.list_files(owner_id=owner_id, thread_id=thread_id)
+            ordered_files = self._file_service.list_files(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
+            )
 
         return [
             file
@@ -448,7 +496,9 @@ class StreamService:
             files_to_upload.append((filename, content))
 
         upload_results = backend.upload_files(files_to_upload)
-        failures = [result for result in upload_results if getattr(result, "error", None)]
+        failures = [
+            result for result in upload_results if getattr(result, "error", None)
+        ]
         if failures:
             failure_details = ", ".join(
                 f"{result.path}: {result.error}" for result in failures
@@ -491,7 +541,10 @@ class StreamService:
 
             messages = cls._extract_node_messages(node_data)
             for message in messages:
-                if message.get("type") not in {"ai", "assistant"} and message.get("role") != "assistant":
+                if (
+                    message.get("type") not in {"ai", "assistant"}
+                    and message.get("role") != "assistant"
+                ):
                     continue
                 # Skip planning steps / tool calls
                 if message.get("tool_calls"):
@@ -512,7 +565,9 @@ class StreamService:
         if isinstance(messages, dict):
             nested_value = messages.get("value")
             if isinstance(nested_value, list):
-                return [message for message in nested_value if isinstance(message, dict)]
+                return [
+                    message for message in nested_value if isinstance(message, dict)
+                ]
             if isinstance(nested_value, dict):
                 return [nested_value]
             return [messages]
@@ -550,21 +605,28 @@ class StreamService:
         self,
         *,
         owner_id: str,
+        actor_role: str,
         thread_id: str,
         current_title: object,
         message: str,
     ) -> None:
-        existing_messages = self._message_service.list_messages(owner_id=owner_id, thread_id=thread_id)
+        existing_messages = self._message_service.list_messages(
+            owner_id=owner_id, thread_id=thread_id
+        )
         if existing_messages:
             return
 
         normalized_title = self._derive_thread_title(message)
         current_title_text = str(current_title or "").strip()
-        if current_title_text and current_title_text not in {"New Conversation", "Untitled Chat"}:
+        if current_title_text and current_title_text not in {
+            "New Conversation",
+            "Untitled Chat",
+        }:
             return
 
         self._thread_service.update_thread_title(
-            owner_id=owner_id,
+            actor_user_id=owner_id,
+            actor_role=actor_role,
             thread_id=thread_id,
             title=normalized_title,
         )
@@ -581,10 +643,19 @@ class StreamService:
     def _import_generated_artifacts(
         self,
         *,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         workspace_files: list[dict[str, Any]],
     ) -> None:
+        thread = self._thread_service.get_thread_for_actor(
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            thread_id=thread_id,
+        )
+        if thread is None:
+            return
+        owner_id = str(thread["owner_id"])
         backend = self._sandbox_backend_factory(
             executor_base_url=self._settings.executor_base_url,
             thread_id=thread_id,
@@ -599,7 +670,9 @@ class StreamService:
         try:
             session_files = backend.list_files()
         except Exception:
-            logger.exception("Failed to list sandbox session files for thread %s", thread_id)
+            logger.exception(
+                "Failed to list sandbox session files for thread %s", thread_id
+            )
             return
 
         artifact_paths: list[str] = []
@@ -609,7 +682,10 @@ class StreamService:
                 continue
             if relative_path in existing_upload_names:
                 continue
-            if basename(relative_path) in existing_upload_names and "/" not in relative_path:
+            if (
+                basename(relative_path) in existing_upload_names
+                and "/" not in relative_path
+            ):
                 continue
             artifact_paths.append(relative_path)
 
@@ -632,7 +708,8 @@ class StreamService:
             content_type = self._content_type_for_path(download.path)
             try:
                 self._file_service.import_artifact(
-                    owner_id=owner_id,
+                    actor_user_id=actor_user_id,
+                    actor_role=actor_role,
                     thread_id=thread_id,
                     relative_path=download.path,
                     content=download.content,
@@ -660,7 +737,11 @@ class StreamService:
             return "text/csv; charset=utf-8"
         if normalized.endswith(".json"):
             return "application/json"
-        if normalized.endswith(".txt") or normalized.endswith(".log") or normalized.endswith(".py"):
+        if (
+            normalized.endswith(".txt")
+            or normalized.endswith(".log")
+            or normalized.endswith(".py")
+        ):
             return "text/plain; charset=utf-8"
         return None
 
@@ -693,7 +774,10 @@ class StreamService:
                             {
                                 "event_type": "assistant_snapshot",
                                 "node_name": normalized_node_name,
-                                "correlation_id": str(message.get("id") or f"{normalized_node_name}-assistant"),
+                                "correlation_id": str(
+                                    message.get("id")
+                                    or f"{normalized_node_name}-assistant"
+                                ),
                                 "status": "done",
                                 "payload": {"content": content},
                             }
@@ -710,10 +794,15 @@ class StreamService:
                                     "name": str(tool_name) if tool_name else None,
                                     "node_name": normalized_node_name,
                                     "correlation_id": str(
-                                        tool_call.get("id") or f"{normalized_node_name}-{tool_name or 'tool'}"
+                                        tool_call.get("id")
+                                        or f"{normalized_node_name}-{tool_name or 'tool'}"
                                     ),
                                     "status": "live",
-                                    "payload": {"args": cls._serialize_payload(tool_call.get("args"))},
+                                    "payload": {
+                                        "args": cls._serialize_payload(
+                                            tool_call.get("args")
+                                        )
+                                    },
                                 }
                             )
 
@@ -730,10 +819,15 @@ class StreamService:
                             "name": str(tool_name) if tool_name else None,
                             "node_name": normalized_node_name,
                             "correlation_id": str(
-                                message.get("tool_call_id") or message.get("id") or f"{normalized_node_name}-{tool_name or 'tool'}"
+                                message.get("tool_call_id")
+                                or message.get("id")
+                                or f"{normalized_node_name}-{tool_name or 'tool'}"
                             ),
                             "status": "done" if tool_status == "success" else "error",
-                            "payload": {"content": serialized_content, "tool_status": tool_status},
+                            "payload": {
+                                "content": serialized_content,
+                                "tool_status": tool_status,
+                            },
                         }
                     )
 
@@ -744,7 +838,9 @@ class StreamService:
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
         if isinstance(value, dict):
-            return {str(key): cls._serialize_payload(item) for key, item in value.items()}
+            return {
+                str(key): cls._serialize_payload(item) for key, item in value.items()
+            }
         if isinstance(value, (list, tuple)):
             return [cls._serialize_payload(item) for item in value]
 

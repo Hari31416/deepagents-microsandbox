@@ -30,7 +30,8 @@ class FileService:
 
     def create_upload_ticket(
         self,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         filename: str,
         content_type: str,
@@ -42,8 +43,10 @@ class FileService:
 
         # Verify thread exists and belongs to owner
         if self._thread_service:
-            thread = self._thread_service.get_thread_for_owner(
-                owner_id=owner_id, thread_id=thread_id
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
             )
             if not thread:
                 raise ValueError("Thread not found")
@@ -65,7 +68,8 @@ class FileService:
 
     def complete_upload(
         self,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         object_key: str,
         original_filename: str,
@@ -74,8 +78,10 @@ class FileService:
         purpose: str = "upload",
     ) -> dict[str, Any]:
         if self._thread_service:
-            thread = self._thread_service.get_thread_for_owner(
-                owner_id=owner_id, thread_id=thread_id
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
             )
             if not thread:
                 raise ValueError("Thread not found")
@@ -93,7 +99,8 @@ class FileService:
 
     def create_download_ticket(
         self,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         file_id: str | None = None,
         object_key: str | None = None,
@@ -102,8 +109,10 @@ class FileService:
             raise ValueError("Storage not configured")
 
         if self._thread_service:
-            thread = self._thread_service.get_thread_for_owner(
-                owner_id=owner_id, thread_id=thread_id
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
             )
             if not thread:
                 raise ValueError("Thread not found")
@@ -126,10 +135,12 @@ class FileService:
             "expires_at": ticket.expires_at,
         }
 
-    def list_files(self, owner_id: str, thread_id: str) -> list[dict]:
+    def list_files(self, actor_user_id: str, actor_role: str, thread_id: str) -> list[dict]:
         if self._thread_service:
-            thread = self._thread_service.get_thread_for_owner(
-                owner_id=owner_id, thread_id=thread_id
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
             )
             if not thread:
                 raise ValueError("Thread not found")
@@ -157,7 +168,8 @@ class FileService:
     def import_artifact(
         self,
         *,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         relative_path: str,
         content: bytes,
@@ -167,8 +179,10 @@ class FileService:
             raise ValueError("Storage not configured")
 
         if self._thread_service:
-            thread = self._thread_service.get_thread_for_owner(
-                owner_id=owner_id, thread_id=thread_id
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
             )
             if not thread:
                 raise ValueError("Thread not found")

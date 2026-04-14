@@ -12,20 +12,21 @@ class StubThreadService:
     def __init__(self) -> None:
         self.updated_titles: list[dict[str, str]] = []
 
-    def get_thread_for_owner(self, owner_id: str, thread_id: str):
-        if owner_id == "user-1" and thread_id == "thread-1":
-            return {"thread_id": thread_id, "owner_id": owner_id, "title": "New Conversation"}
+    def get_thread_for_actor(self, *, actor_user_id: str, actor_role: str, thread_id: str):
+        if actor_user_id == "user-1" and thread_id == "thread-1":
+            return {"thread_id": thread_id, "owner_id": "user-1", "title": "New Conversation"}
         return None
 
-    def update_thread_title(self, owner_id: str, thread_id: str, title: str):
+    def update_thread_title(self, actor_user_id: str, actor_role: str, thread_id: str, title: str):
         self.updated_titles.append(
             {
-                "owner_id": owner_id,
+                "owner_id": actor_user_id,
+                "actor_role": actor_role,
                 "thread_id": thread_id,
                 "title": title,
             }
         )
-        return {"thread_id": thread_id, "owner_id": owner_id, "title": title}
+        return {"thread_id": thread_id, "owner_id": actor_user_id, "title": title}
 
 
 class StubFileService:
@@ -57,8 +58,8 @@ class StubFileService:
         self.content_requests: list[str] = []
         self.imported_artifacts: list[dict[str, object]] = []
 
-    def list_files(self, owner_id: str, thread_id: str) -> list[dict[str, object]]:
-        self.list_files_calls.append((owner_id, thread_id))
+    def list_files(self, actor_user_id: str, actor_role: str, thread_id: str) -> list[dict[str, object]]:
+        self.list_files_calls.append((actor_user_id, actor_role, thread_id))
         return list(self._files)
 
     def list_files_by_ids(self, thread_id: str, file_ids: list[str]) -> list[dict[str, object]]:
@@ -75,14 +76,16 @@ class StubFileService:
     def import_artifact(
         self,
         *,
-        owner_id: str,
+        actor_user_id: str,
+        actor_role: str,
         thread_id: str,
         relative_path: str,
         content: bytes,
         content_type: str | None = None,
     ) -> dict[str, object]:
         artifact = {
-            "owner_id": owner_id,
+            "owner_id": actor_user_id,
+            "actor_role": actor_role,
             "thread_id": thread_id,
             "relative_path": relative_path,
             "content": content,
@@ -286,7 +289,8 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     async def consume_stream() -> str:
         chunks: list[str] = []
         async for chunk in service.stream_chat(
-            owner_id="user-1",
+            actor_user_id="user-1",
+            actor_role="user",
             thread_id="thread-1",
             message="What columns are in the file?",
             selected_file_ids=[],
@@ -300,10 +304,11 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     assert "event: updates" in output
     assert "event: delta" in output
     assert "event: done" in output
-    assert file_service.list_files_calls == [("user-1", "thread-1")]
+    assert file_service.list_files_calls == [("user-1", "user", "thread-1")]
     assert thread_service.updated_titles == [
         {
             "owner_id": "user-1",
+            "actor_role": "user",
             "thread_id": "thread-1",
             "title": "What columns are in the file?",
         }
@@ -312,6 +317,7 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     assert file_service.imported_artifacts == [
         {
             "owner_id": "user-1",
+            "actor_role": "user",
             "thread_id": "thread-1",
             "relative_path": "gender_survival_rate.png",
             "content": b"png-bytes",
@@ -493,7 +499,8 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     async def consume_stream() -> str:
         chunks: list[str] = []
         async for chunk in service.stream_chat(
-            owner_id="user-1",
+            actor_user_id="user-1",
+            actor_role="user",
             thread_id="thread-1",
             message="Summarize the dataset",
             selected_file_ids=["file-1"],
@@ -509,6 +516,7 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     assert thread_service.updated_titles == [
         {
             "owner_id": "user-1",
+            "actor_role": "user",
             "thread_id": "thread-1",
             "title": "Summarize the dataset",
         }
@@ -557,7 +565,8 @@ def test_stream_service_records_runtime_failures() -> None:
     async def consume_stream() -> str:
         chunks: list[str] = []
         async for chunk in service.stream_chat(
-            owner_id="user-1",
+            actor_user_id="user-1",
+            actor_role="user",
             thread_id="thread-1",
             message="Summarize the dataset",
             selected_file_ids=["file-1"],
@@ -572,6 +581,7 @@ def test_stream_service_records_runtime_failures() -> None:
     assert thread_service.updated_titles == [
         {
             "owner_id": "user-1",
+            "actor_role": "user",
             "thread_id": "thread-1",
             "title": "Summarize the dataset",
         }

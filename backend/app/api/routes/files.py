@@ -40,7 +40,8 @@ async def presign_upload(
     services = get_services()
     try:
         return services.file_service.create_upload_ticket(
-            owner_id=user.user_id,
+            actor_user_id=user.user_id,
+            actor_role=user.role,
             thread_id=payload.thread_id,
             filename=payload.filename,
             content_type=payload.content_type,
@@ -59,7 +60,8 @@ async def complete_upload(
     services = get_services()
     try:
         return services.file_service.complete_upload(
-            owner_id=user.user_id,
+            actor_user_id=user.user_id,
+            actor_role=user.role,
             thread_id=payload.thread_id,
             object_key=payload.object_key,
             original_filename=payload.original_filename,
@@ -79,7 +81,8 @@ async def presign_download(
     services = get_services()
     try:
         return services.file_service.create_download_ticket(
-            owner_id=user.user_id,
+            actor_user_id=user.user_id,
+            actor_role=user.role,
             thread_id=payload.thread_id,
             file_id=payload.file_id,
             object_key=payload.object_key,

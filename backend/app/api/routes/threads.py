@@ -31,7 +31,7 @@ async def list_threads(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    return {"threads": services.thread_service.list_threads(owner_id=user.user_id)}
+    return {"threads": services.thread_service.list_threads(actor_user_id=user.user_id, actor_role=user.role)}
 
 
 @router.get("/{thread_id}")
@@ -40,7 +40,11 @@ async def get_thread(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    thread = services.thread_service.get_thread_for_actor(
+        actor_user_id=user.user_id,
+        actor_role=user.role,
+        thread_id=thread_id,
+    )
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     return thread
@@ -54,7 +58,8 @@ async def update_thread(
 ):
     services = get_services()
     thread = services.thread_service.update_thread_title(
-        owner_id=user.user_id,
+        actor_user_id=user.user_id,
+        actor_role=user.role,
         thread_id=thread_id,
         title=payload.title,
     )
@@ -69,7 +74,11 @@ async def delete_thread(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    deleted = services.thread_service.delete_thread(owner_id=user.user_id, thread_id=thread_id)
+    deleted = services.thread_service.delete_thread(
+        actor_user_id=user.user_id,
+        actor_role=user.role,
+        thread_id=thread_id,
+    )
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
@@ -81,7 +90,13 @@ async def list_thread_files(
 ):
     services = get_services()
     try:
-        return {"files": services.file_service.list_files(owner_id=user.user_id, thread_id=thread_id)}
+        return {
+            "files": services.file_service.list_files(
+                actor_user_id=user.user_id,
+                actor_role=user.role,
+                thread_id=thread_id,
+            )
+        }
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -92,10 +107,20 @@ async def list_thread_messages(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    thread = services.thread_service.get_thread_for_actor(
+        actor_user_id=user.user_id,
+        actor_role=user.role,
+        thread_id=thread_id,
+    )
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    return {"messages": services.message_service.list_messages(owner_id=user.user_id, thread_id=thread_id)}
+    owner_id = str(thread["owner_id"])
+    return {
+        "messages": services.message_service.list_messages(
+            owner_id=owner_id if user.is_admin else user.user_id,
+            thread_id=thread_id,
+        )
+    }
 
 
 @router.get("/{thread_id}/events")
@@ -105,12 +130,17 @@ async def list_thread_events(
     run_id: str | None = None,
 ):
     services = get_services()
-    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    thread = services.thread_service.get_thread_for_actor(
+        actor_user_id=user.user_id,
+        actor_role=user.role,
+        thread_id=thread_id,
+    )
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    owner_id = str(thread["owner_id"])
     return {
         "events": services.run_event_service.list_events(
-            owner_id=user.user_id,
+            owner_id=owner_id if user.is_admin else user.user_id,
             thread_id=thread_id,
             run_id=run_id,
         )
@@ -123,10 +153,15 @@ async def list_thread_runs(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    thread = services.thread_service.get_thread_for_actor(
+        actor_user_id=user.user_id,
+        actor_role=user.role,
+        thread_id=thread_id,
+    )
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    return {"runs": services.run_service.list_runs(owner_id=user.user_id, thread_id=thread_id)}
+    owner_id = str(thread["owner_id"])
+    return {"runs": services.run_service.list_runs(owner_id=owner_id if user.is_admin else user.user_id, thread_id=thread_id)}
 
 
 @router.get("/{thread_id}/runs/{run_id}")
@@ -136,10 +171,19 @@ async def get_thread_run(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    thread = services.thread_service.get_thread_for_owner(owner_id=user.user_id, thread_id=thread_id)
+    thread = services.thread_service.get_thread_for_actor(
+        actor_user_id=user.user_id,
+        actor_role=user.role,
+        thread_id=thread_id,
+    )
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    run = services.run_service.get_run(owner_id=user.user_id, thread_id=thread_id, run_id=run_id)
+    owner_id = str(thread["owner_id"])
+    run = services.run_service.get_run(
+        owner_id=owner_id if user.is_admin else user.user_id,
+        thread_id=thread_id,
+        run_id=run_id,
+    )
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     return run

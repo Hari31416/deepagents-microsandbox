@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     minio_bucket: str = "deepagent"
     minio_secure: bool = False
     presigned_url_expiry_seconds: int = 900
+    auth_secret_key: str = "deepagent-dev-secret"
+    auth_access_cookie_name: str = "deepagent_access_token"
+    auth_refresh_cookie_name: str = "deepagent_refresh_token"
+    auth_access_token_ttl_seconds: int = 3600
+    auth_refresh_token_ttl_seconds: int = 604800
+    auth_cookie_secure: bool = False
+    super_admin_email: str = "superadmin@deepagent.local"
+    super_admin_password: str = "ChangeMe123!"
+    super_admin_name: str = "Super Admin"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -33,13 +42,17 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def apply_langgraph_postgres_uri(self) -> "Settings":
         if self.postgres_uri:
-            self.database_url = self.postgres_uri.replace("postgresql://", "postgresql+psycopg://", 1)
+            self.database_url = self.postgres_uri.replace(
+                "postgresql://", "postgresql+psycopg://", 1
+            )
         return self
 
     @property
     def runtime_postgres_uri(self) -> str | None:
         if self.database_url.startswith("postgresql+psycopg://"):
-            return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+            return self.database_url.replace(
+                "postgresql+psycopg://", "postgresql://", 1
+            )
         if self.database_url.startswith("postgresql://"):
             return self.database_url
         return None

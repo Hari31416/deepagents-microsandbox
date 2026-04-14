@@ -23,7 +23,8 @@ async def stream_chat(
 ):
     services = get_services()
     stream = services.stream_service.stream_chat(
-        owner_id=user.user_id,
+        actor_user_id=user.user_id,
+        actor_role=user.role,
         thread_id=payload.thread_id,
         message=payload.message,
         selected_file_ids=payload.selected_file_ids,

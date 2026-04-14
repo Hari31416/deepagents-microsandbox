@@ -1,6 +1,19 @@
 from fastapi.testclient import TestClient
 
 from app.api.main import create_app
+from app.config import get_settings
+
+
+def _login_as_super_admin(client: TestClient) -> None:
+    settings = get_settings()
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "email": settings.super_admin_email,
+            "password": settings.super_admin_password,
+        },
+    )
+    assert response.status_code == 200
 
 
 def test_health_route() -> None:
@@ -16,6 +29,7 @@ def test_health_route() -> None:
 
 def test_create_and_get_thread() -> None:
     client = TestClient(create_app())
+    _login_as_super_admin(client)
 
     create_response = client.post("/api/threads", json={"title": "First thread"})
     assert create_response.status_code == 201
@@ -40,6 +54,7 @@ def test_create_and_get_thread() -> None:
 
 def test_update_and_delete_thread() -> None:
     client = TestClient(create_app())
+    _login_as_super_admin(client)
 
     create_response = client.post("/api/threads", json={"title": "Original title"})
     assert create_response.status_code == 201

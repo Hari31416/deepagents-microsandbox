@@ -5,9 +5,9 @@ The backend is built with **Python 3.12+** using the **FastAPI** framework. It s
 ## Core Responsibilities
 
 - **Agent Orchestration**: Managing the lifecycle of AI agents using LangGraph and DeepAgents.
-- **Session Management**: Handling user threads, messages, and runs.
+- **Session Management**: Handling authenticated users, cookies, refresh tokens, user threads, messages, and runs.
 - **File Management**: Orchestrating file uploads, downloads, and artifact generation in conjunction with MinIO and the Sandbox Executor.
-- **Security**: Validating user IDs and ensuring isolated execution of agent-generated code.
+- **Security**: Enforcing RBAC, thread ownership rules, and isolated execution of agent-generated code.
 
 ## Key Technologies
 

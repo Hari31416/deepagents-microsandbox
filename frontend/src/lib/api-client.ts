@@ -1,17 +1,28 @@
 import axios from "axios"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api"
-const DEFAULT_USER_ID = import.meta.env.VITE_DEFAULT_USER_ID || "dev-user-123"
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
-    "X-User-Id": DEFAULT_USER_ID,
   },
 })
 
-// Types from handoff
+export interface AuthUser {
+  user_id: string
+  email: string
+  display_name?: string | null
+  role: "super_admin" | "admin" | "user"
+  status: "active" | "disabled"
+  created_by?: string | null
+  is_seeded: boolean
+  created_at: string
+  updated_at: string
+  last_login_at?: string | null
+}
+
 export interface Thread {
   thread_id: string
   owner_id: string
@@ -22,7 +33,7 @@ export interface Thread {
 export interface ThreadFile {
   file_id: string
   thread_id: string
-  object_key: string
+  object_key?: string
   original_filename: string
   content_type: string
   size: number
@@ -77,6 +88,24 @@ export interface PresignedDownload {
   expires_at: string
 }
 
+export const authApi = {
+  me: () => apiClient.get<{ user: AuthUser }>("/auth/me").then((r) => r.data),
+  login: (email: string, password: string) =>
+    apiClient.post<{ user: AuthUser }>("/auth/login", { email, password }).then((r) => r.data),
+  refresh: () => apiClient.post<{ user: AuthUser }>("/auth/refresh").then((r) => r.data),
+  logout: () => apiClient.post("/auth/logout").then((r) => r.data),
+}
+
+export const adminUsersApi = {
+  list: () => apiClient.get<{ users: AuthUser[] }>("/admin/users").then((r) => r.data),
+  create: (payload: { email: string; password: string; display_name?: string | null; role: AuthUser["role"] }) =>
+    apiClient.post<AuthUser>("/admin/users", payload).then((r) => r.data),
+  update: (userId: string, payload: { display_name?: string | null; role?: AuthUser["role"] | null; status?: AuthUser["status"] | null }) =>
+    apiClient.patch<AuthUser>(`/admin/users/${userId}`, payload).then((r) => r.data),
+  resetPassword: (userId: string, password: string) =>
+    apiClient.post<AuthUser>(`/admin/users/${userId}/reset-password`, { password }).then((r) => r.data),
+}
+
 export const threadsApi = {
   list: () => apiClient.get<{ threads: Thread[] }>("/threads").then((r) => r.data),
   create: (title?: string) => apiClient.post<Thread>("/threads", { title }).then((r) => r.data),
@@ -114,7 +143,6 @@ export const filesApi = {
   }) => apiClient.post<PresignedDownload>("/files/presign-download", params).then((r) => r.data),
 }
 
-// SSE Parser
 export interface SseEvent {
   event: string
   id?: string
@@ -129,9 +157,9 @@ export async function* streamChat(params: {
 }) {
   const response = await fetch(`${API_BASE_URL}/chat/stream`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      "X-User-Id": DEFAULT_USER_ID,
     },
     body: JSON.stringify(params),
   })
@@ -222,8 +250,8 @@ export async function* streamChat(params: {
     }
   }
 
-  const trailingEvent = flushEvent()
-  if (trailingEvent) {
-    yield trailingEvent
+  const finalEvent = flushEvent()
+  if (finalEvent) {
+    yield finalEvent
   }
 }

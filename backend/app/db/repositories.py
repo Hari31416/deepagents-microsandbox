@@ -4,9 +4,44 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import asc, delete, desc, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Thread, ThreadFile, ThreadMessage, ThreadRun, ThreadRunEvent, ThreadSandboxSession, User
+from app.db.models import (
+    AuditLog,
+    RefreshToken,
+    Thread,
+    ThreadFile,
+    ThreadMessage,
+    ThreadRun,
+    ThreadRunEvent,
+    ThreadSandboxSession,
+    User,
+)
+
+
+@dataclass(frozen=True)
+class UserRecord:
+    user_id: str
+    email: str
+    display_name: str | None
+    password_hash: str
+    role: str
+    status: str
+    created_by: str | None
+    is_seeded: bool
+    created_at: datetime
+    updated_at: datetime
+    last_login_at: datetime | None
+
+
+@dataclass(frozen=True)
+class RefreshTokenRecord:
+    token_id: str
+    user_id: str
+    token_hash: str
+    expires_at: datetime
+    revoked_at: datetime | None
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -63,13 +98,208 @@ class ThreadRunEventRecord:
     created_at: datetime
 
 
+class UserRepository:
+    def __init__(self, session_factory: sessionmaker) -> None:
+        self._session_factory = session_factory
+
+    def create_user(
+        self,
+        *,
+        email: str,
+        display_name: str | None,
+        password_hash: str,
+        role: str,
+        status: str,
+        created_by: str | None,
+        is_seeded: bool,
+    ) -> UserRecord:
+        with self._session_factory() as session:
+            record = User(
+                email=email,
+                display_name=display_name,
+                password_hash=password_hash,
+                role=role,
+                status=status,
+                created_by=created_by,
+                is_seeded=is_seeded,
+            )
+            session.add(record)
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def get_by_id(self, user_id: str) -> UserRecord | None:
+        with self._session_factory() as session:
+            record = session.get(User, user_id)
+            return None if record is None else self._to_record(record)
+
+    def get_by_email(self, email: str) -> UserRecord | None:
+        with self._session_factory() as session:
+            statement = select(User).where(User.email == email)
+            record = session.scalar(statement)
+            return None if record is None else self._to_record(record)
+
+    def list_users(self) -> list[UserRecord]:
+        with self._session_factory() as session:
+            statement = select(User).order_by(asc(User.created_at), asc(User.email))
+            return [self._to_record(record) for record in session.scalars(statement)]
+
+    def has_role(self, role: str) -> bool:
+        with self._session_factory() as session:
+            statement = select(User.id).where(User.role == role).limit(1)
+            return session.scalar(statement) is not None
+
+    def update_user(
+        self,
+        *,
+        user_id: str,
+        display_name: str | None = None,
+        role: str | None = None,
+        status: str | None = None,
+    ) -> UserRecord:
+        with self._session_factory() as session:
+            record = session.get(User, user_id)
+            if record is None:
+                raise ValueError("User not found")
+            if display_name is not None:
+                record.display_name = display_name
+            if role is not None:
+                record.role = role
+            if status is not None:
+                record.status = status
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def update_password(self, *, user_id: str, password_hash: str) -> UserRecord:
+        with self._session_factory() as session:
+            record = session.get(User, user_id)
+            if record is None:
+                raise ValueError("User not found")
+            record.password_hash = password_hash
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def update_last_login(self, *, user_id: str, last_login_at: datetime) -> None:
+        with self._session_factory() as session:
+            record = session.get(User, user_id)
+            if record is None:
+                raise ValueError("User not found")
+            record.last_login_at = last_login_at
+            session.commit()
+
+    def exists(self, *, session: Session, user_id: str) -> bool:
+        return session.get(User, user_id) is not None
+
+    @staticmethod
+    def _to_record(record: User) -> UserRecord:
+        return UserRecord(
+            user_id=record.id,
+            email=record.email,
+            display_name=record.display_name,
+            password_hash=record.password_hash,
+            role=record.role,
+            status=record.status,
+            created_by=record.created_by,
+            is_seeded=record.is_seeded,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            last_login_at=record.last_login_at,
+        )
+
+
+class RefreshTokenRepository:
+    def __init__(self, session_factory: sessionmaker) -> None:
+        self._session_factory = session_factory
+
+    def create_token(
+        self,
+        *,
+        user_id: str,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> RefreshTokenRecord:
+        with self._session_factory() as session:
+            record = RefreshToken(
+                user_id=user_id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+            )
+            session.add(record)
+            session.commit()
+            session.refresh(record)
+            return self._to_record(record)
+
+    def get_active_by_hash(self, token_hash: str) -> RefreshTokenRecord | None:
+        with self._session_factory() as session:
+            statement = select(RefreshToken).where(
+                RefreshToken.token_hash == token_hash
+            )
+            record = session.scalar(statement)
+            if record is None:
+                return None
+            now = datetime.now(UTC)
+            if record.revoked_at is not None or record.expires_at <= now:
+                return None
+            return self._to_record(record)
+
+    def revoke_token(self, token_id: str) -> None:
+        with self._session_factory() as session:
+            record = session.get(RefreshToken, token_id)
+            if record is None:
+                return
+            if record.revoked_at is None:
+                record.revoked_at = datetime.now(UTC)
+                session.commit()
+
+    @staticmethod
+    def _to_record(record: RefreshToken) -> RefreshTokenRecord:
+        return RefreshTokenRecord(
+            token_id=record.id,
+            user_id=record.user_id,
+            token_hash=record.token_hash,
+            expires_at=record.expires_at,
+            revoked_at=record.revoked_at,
+            created_at=record.created_at,
+        )
+
+
+class AuditLogRepository:
+    def __init__(self, session_factory: sessionmaker) -> None:
+        self._session_factory = session_factory
+
+    def create_log(
+        self,
+        *,
+        actor_id: str | None,
+        actor_role: str | None,
+        action: str,
+        target_type: str | None,
+        target_id: str | None,
+        payload: dict[str, object],
+    ) -> None:
+        with self._session_factory() as session:
+            record = AuditLog(
+                actor_id=actor_id,
+                actor_role=actor_role,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                payload=payload,
+            )
+            session.add(record)
+            session.commit()
+
+
 class ThreadRepository:
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
 
     def create_thread(self, owner_id: str, title: str | None = None) -> Thread:
         with self._session_factory() as session:
-            self._ensure_user(session=session, user_id=owner_id)
+            if session.get(User, owner_id) is None:
+                raise ValueError("Owner not found")
             thread = Thread(owner_id=owner_id, title=title)
             session.add(thread)
             session.commit()
@@ -85,15 +315,25 @@ class ThreadRepository:
             )
             return list(session.scalars(statement))
 
+    def list_all_threads(self) -> list[Thread]:
+        with self._session_factory() as session:
+            statement = select(Thread).order_by(desc(Thread.created_at))
+            return list(session.scalars(statement))
+
+    def get_thread(self, thread_id: str) -> Thread | None:
+        with self._session_factory() as session:
+            return session.get(Thread, thread_id)
+
     def get_thread_for_owner(self, owner_id: str, thread_id: str) -> Thread | None:
         with self._session_factory() as session:
-            statement = select(Thread).where(Thread.id == thread_id, Thread.owner_id == owner_id)
+            statement = select(Thread).where(
+                Thread.id == thread_id, Thread.owner_id == owner_id
+            )
             return session.scalar(statement)
 
-    def update_title(self, *, owner_id: str, thread_id: str, title: str) -> Thread | None:
+    def update_title(self, *, thread_id: str, title: str | None) -> Thread | None:
         with self._session_factory() as session:
-            statement = select(Thread).where(Thread.id == thread_id, Thread.owner_id == owner_id)
-            record = session.scalar(statement)
+            record = session.get(Thread, thread_id)
             if record is None:
                 return None
             record.title = title
@@ -101,28 +341,28 @@ class ThreadRepository:
             session.refresh(record)
             return record
 
-    def delete_thread(self, *, owner_id: str, thread_id: str) -> bool:
+    def delete_thread(self, *, thread_id: str) -> bool:
         with self._session_factory() as session:
-            statement = select(Thread).where(Thread.id == thread_id, Thread.owner_id == owner_id)
-            record = session.scalar(statement)
+            record = session.get(Thread, thread_id)
             if record is None:
                 return False
 
-            session.execute(delete(ThreadRunEvent).where(ThreadRunEvent.thread_id == thread_id))
-            session.execute(delete(ThreadMessage).where(ThreadMessage.thread_id == thread_id))
+            session.execute(
+                delete(ThreadRunEvent).where(ThreadRunEvent.thread_id == thread_id)
+            )
+            session.execute(
+                delete(ThreadMessage).where(ThreadMessage.thread_id == thread_id)
+            )
             session.execute(delete(ThreadFile).where(ThreadFile.thread_id == thread_id))
-            session.execute(delete(ThreadSandboxSession).where(ThreadSandboxSession.thread_id == thread_id))
+            session.execute(
+                delete(ThreadSandboxSession).where(
+                    ThreadSandboxSession.thread_id == thread_id
+                )
+            )
             session.execute(delete(ThreadRun).where(ThreadRun.thread_id == thread_id))
             session.delete(record)
             session.commit()
             return True
-
-    @staticmethod
-    def _ensure_user(*, session, user_id: str) -> None:
-        existing = session.get(User, user_id)
-        if existing is None:
-            session.add(User(id=user_id))
-            session.flush()
 
 
 class FileRepository:
@@ -166,7 +406,9 @@ class FileRepository:
 
     def get_file(self, thread_id: str, file_id: str) -> ThreadFile | None:
         with self._session_factory() as session:
-            statement = select(ThreadFile).where(ThreadFile.id == file_id, ThreadFile.thread_id == thread_id)
+            statement = select(ThreadFile).where(
+                ThreadFile.id == file_id, ThreadFile.thread_id == thread_id
+            )
             return session.scalar(statement)
 
     def get_files_by_ids(self, thread_id: str, file_ids: list[str]) -> list[ThreadFile]:
@@ -174,16 +416,16 @@ class FileRepository:
             return []
         with self._session_factory() as session:
             statement = select(ThreadFile).where(
-                ThreadFile.thread_id == thread_id,
-                ThreadFile.id.in_(file_ids)
+                ThreadFile.thread_id == thread_id, ThreadFile.id.in_(file_ids)
             )
             return list(session.scalars(statement))
 
-    def get_file_by_object_key(self, *, thread_id: str, object_key: str) -> ThreadFile | None:
+    def get_file_by_object_key(
+        self, *, thread_id: str, object_key: str
+    ) -> ThreadFile | None:
         with self._session_factory() as session:
             statement = select(ThreadFile).where(
-                ThreadFile.thread_id == thread_id,
-                ThreadFile.object_key == object_key,
+                ThreadFile.thread_id == thread_id, ThreadFile.object_key == object_key
             )
             return session.scalar(statement)
 
@@ -197,7 +439,9 @@ class FileRepository:
         status: str,
     ) -> ThreadFile:
         with self._session_factory() as session:
-            statement = select(ThreadFile).where(ThreadFile.id == file_id, ThreadFile.thread_id == thread_id)
+            statement = select(ThreadFile).where(
+                ThreadFile.id == file_id, ThreadFile.thread_id == thread_id
+            )
             record = session.scalar(statement)
             if record is None:
                 raise ValueError("File not found")
@@ -280,7 +524,9 @@ class ThreadRunRepository:
             return self._to_record(record)
 
     def mark_running(self, *, run_id: str) -> ThreadRunRecord:
-        return self._update_status(run_id=run_id, status="running", started_at=datetime.now(UTC))
+        return self._update_status(
+            run_id=run_id, status="running", started_at=datetime.now(UTC)
+        )
 
     def complete_run(
         self,
@@ -336,12 +582,33 @@ class ThreadRunRepository:
             )
             return [self._to_record(record) for record in session.scalars(statement)]
 
-    def get_run(self, *, owner_id: str, thread_id: str, run_id: str) -> ThreadRunRecord | None:
+    def list_runs_by_thread(self, *, thread_id: str) -> list[ThreadRunRecord]:
+        with self._session_factory() as session:
+            statement = (
+                select(ThreadRun)
+                .where(ThreadRun.thread_id == thread_id)
+                .order_by(desc(ThreadRun.created_at))
+            )
+            return [self._to_record(record) for record in session.scalars(statement)]
+
+    def get_run(
+        self, *, owner_id: str, thread_id: str, run_id: str
+    ) -> ThreadRunRecord | None:
         with self._session_factory() as session:
             statement = select(ThreadRun).where(
                 ThreadRun.id == run_id,
                 ThreadRun.owner_id == owner_id,
                 ThreadRun.thread_id == thread_id,
+            )
+            record = session.scalar(statement)
+            return None if record is None else self._to_record(record)
+
+    def get_run_by_thread(
+        self, *, thread_id: str, run_id: str
+    ) -> ThreadRunRecord | None:
+        with self._session_factory() as session:
+            statement = select(ThreadRun).where(
+                ThreadRun.id == run_id, ThreadRun.thread_id == thread_id
             )
             record = session.scalar(statement)
             return None if record is None else self._to_record(record)
@@ -443,12 +710,32 @@ class ThreadMessageRepository:
             session.refresh(record)
             return self._to_record(record)
 
-    def list_messages(self, *, owner_id: str, thread_id: str) -> list[ThreadMessageRecord]:
+    def list_messages(
+        self, *, owner_id: str, thread_id: str
+    ) -> list[ThreadMessageRecord]:
         with self._session_factory() as session:
             statement = (
                 select(ThreadMessage)
-                .where(ThreadMessage.owner_id == owner_id, ThreadMessage.thread_id == thread_id)
-                .order_by(asc(ThreadMessage.created_at), asc(ThreadMessage.id))
+                .where(
+                    ThreadMessage.owner_id == owner_id,
+                    ThreadMessage.thread_id == thread_id,
+                )
+                .order_by(
+                    asc(ThreadMessage.created_at),
+                    asc(ThreadMessage.id),
+                )
+            )
+            return [self._to_record(record) for record in session.scalars(statement)]
+
+    def list_messages_by_thread(self, *, thread_id: str) -> list[ThreadMessageRecord]:
+        with self._session_factory() as session:
+            statement = (
+                select(ThreadMessage)
+                .where(ThreadMessage.thread_id == thread_id)
+                .order_by(
+                    asc(ThreadMessage.created_at),
+                    asc(ThreadMessage.id),
+                )
             )
             return [self._to_record(record) for record in session.scalars(statement)]
 
@@ -529,8 +816,35 @@ class ThreadRunEventRepository:
         with self._session_factory() as session:
             statement = (
                 select(ThreadRunEvent)
-                .where(ThreadRunEvent.owner_id == owner_id, ThreadRunEvent.thread_id == thread_id)
-                .order_by(asc(ThreadRunEvent.created_at), asc(ThreadRunEvent.sequence), asc(ThreadRunEvent.id))
+                .where(
+                    ThreadRunEvent.owner_id == owner_id,
+                    ThreadRunEvent.thread_id == thread_id,
+                )
+                .order_by(
+                    asc(ThreadRunEvent.created_at),
+                    asc(ThreadRunEvent.sequence),
+                    asc(ThreadRunEvent.id),
+                )
+            )
+            if run_id is not None:
+                statement = statement.where(ThreadRunEvent.run_id == run_id)
+            return [self._to_record(record) for record in session.scalars(statement)]
+
+    def list_events_by_thread(
+        self,
+        *,
+        thread_id: str,
+        run_id: str | None = None,
+    ) -> list[ThreadRunEventRecord]:
+        with self._session_factory() as session:
+            statement = (
+                select(ThreadRunEvent)
+                .where(ThreadRunEvent.thread_id == thread_id)
+                .order_by(
+                    asc(ThreadRunEvent.created_at),
+                    asc(ThreadRunEvent.sequence),
+                    asc(ThreadRunEvent.id),
+                )
             )
             if run_id is not None:
                 statement = statement.where(ThreadRunEvent.run_id == run_id)

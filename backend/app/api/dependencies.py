@@ -2,8 +2,19 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from app.config import Settings, get_settings
-from app.db.repositories import FileRepository, ThreadMessageRepository, ThreadRepository, ThreadRunEventRepository, ThreadRunRepository
+from app.db.repositories import (
+    AuditLogRepository,
+    FileRepository,
+    RefreshTokenRepository,
+    ThreadMessageRepository,
+    ThreadRepository,
+    ThreadRunEventRepository,
+    ThreadRunRepository,
+    UserRepository,
+)
 from app.db.session import get_session_factory, init_database
+from app.services.audit_service import AuditService
+from app.services.auth_service import AuthService
 from app.services.file_service import FileService
 from app.services.message_service import MessageService
 from app.services.run_event_service import RunEventService
@@ -11,12 +22,16 @@ from app.services.run_service import RunService
 from app.services.runtime_service import RuntimeService
 from app.services.stream_service import StreamService
 from app.services.thread_service import ThreadService
+from app.services.user_service import UserService
 from app.storage.minio import MinioStorage
 
 
 @dataclass(frozen=True)
 class ServiceContainer:
     settings: Settings
+    auth_service: AuthService
+    user_service: UserService
+    audit_service: AuditService
     thread_service: ThreadService
     file_service: FileService
     message_service: MessageService
@@ -31,12 +46,25 @@ def get_services() -> ServiceContainer:
     settings = get_settings()
     init_database()
     session_factory = get_session_factory()
+    user_repository = UserRepository(session_factory=session_factory)
+    refresh_token_repository = RefreshTokenRepository(session_factory=session_factory)
+    audit_repository = AuditLogRepository(session_factory=session_factory)
     thread_repository = ThreadRepository(session_factory=session_factory)
     file_repository = FileRepository(session_factory=session_factory)
     message_repository = ThreadMessageRepository(session_factory=session_factory)
     run_event_repository = ThreadRunEventRepository(session_factory=session_factory)
     run_repository = ThreadRunRepository(session_factory=session_factory)
     minio_storage = MinioStorage(settings)
+    audit_service = AuditService(repository=audit_repository)
+    user_service = UserService(repository=user_repository, audit_service=audit_service)
+    auth_service = AuthService(
+        settings=settings,
+        user_repository=user_repository,
+        refresh_token_repository=refresh_token_repository,
+        user_service=user_service,
+        audit_service=audit_service,
+    )
+    auth_service.ensure_seeded_super_admin()
     thread_service = ThreadService(repository=thread_repository, storage=minio_storage)
     file_service = FileService(
         thread_service=thread_service,
@@ -58,6 +86,9 @@ def get_services() -> ServiceContainer:
     )
     return ServiceContainer(
         settings=settings,
+        auth_service=auth_service,
+        user_service=user_service,
+        audit_service=audit_service,
         thread_service=thread_service,
         file_service=file_service,
         message_service=message_service,
