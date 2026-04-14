@@ -28,6 +28,12 @@ class ThreadService:
             return None
         return asdict(self._to_record(record))
 
+    def update_thread_title(self, owner_id: str, thread_id: str, title: str) -> dict[str, str | None] | None:
+        record = self._repository.update_title(owner_id=owner_id, thread_id=thread_id, title=title)
+        if record is None:
+            return None
+        return asdict(self._to_record(record))
+
     @staticmethod
     def _to_record(record) -> ThreadRecord:
         return ThreadRecord(

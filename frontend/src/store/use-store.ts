@@ -10,6 +10,7 @@ interface AppState {
   setThreads: (threads: Thread[]) => void
   setActiveThreadId: (id: string | null) => void
   setThreadFiles: (threadId: string, files: ThreadFile[]) => void
+  updateThreadTitle: (threadId: string, title: string) => void
   toggleSidebar: () => void
 }
 
@@ -24,6 +25,12 @@ export const useStore = create<AppState>((set) => ({
   setThreadFiles: (threadId, files) => 
     set((state) => ({ 
       threadFiles: { ...state.threadFiles, [threadId]: files } 
+    })),
+  updateThreadTitle: (threadId, title) =>
+    set((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.thread_id === threadId ? { ...thread, title } : thread,
+      ),
     })),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
 }))
