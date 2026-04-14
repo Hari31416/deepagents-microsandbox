@@ -13,6 +13,7 @@ interface AppState {
   setActiveThreadId: (id: string | null) => void
   setThreadFiles: (threadId: string, files: ThreadFile[]) => void
   updateThreadTitle: (threadId: string, title: string) => void
+  removeThread: (threadId: string) => void
   toggleSidebar: () => void
   toggleWorkspace: () => void
   setSelectedFile: (file: ThreadFile | null) => void
@@ -38,6 +39,16 @@ export const useStore = create<AppState>((set) => ({
         thread.thread_id === threadId ? { ...thread, title } : thread,
       ),
     })),
+  removeThread: (threadId) =>
+    set((state) => {
+      const nextThreadFiles = { ...state.threadFiles }
+      delete nextThreadFiles[threadId]
+      return {
+        threads: state.threads.filter((thread) => thread.thread_id !== threadId),
+        threadFiles: nextThreadFiles,
+        selectedFile: state.selectedFile?.thread_id === threadId ? null : state.selectedFile,
+      }
+    }),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   toggleWorkspace: () => set((state) => ({ isWorkspaceOpen: !state.isWorkspaceOpen })),
   setSelectedFile: (selectedFile) => set({ selectedFile }),

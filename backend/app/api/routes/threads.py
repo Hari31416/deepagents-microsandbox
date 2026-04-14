@@ -13,6 +13,10 @@ class CreateThreadRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
 
 
+class UpdateThreadRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_thread(
     payload: CreateThreadRequest,
@@ -40,6 +44,34 @@ async def get_thread(
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     return thread
+
+
+@router.patch("/{thread_id}")
+async def update_thread(
+    thread_id: str,
+    payload: UpdateThreadRequest,
+    user: Annotated[UserContext, Depends(get_current_user)],
+):
+    services = get_services()
+    thread = services.thread_service.update_thread_title(
+        owner_id=user.user_id,
+        thread_id=thread_id,
+        title=payload.title,
+    )
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return thread
+
+
+@router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_thread(
+    thread_id: str,
+    user: Annotated[UserContext, Depends(get_current_user)],
+):
+    services = get_services()
+    deleted = services.thread_service.delete_thread(owner_id=user.user_id, thread_id=thread_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
 
 @router.get("/{thread_id}/files")

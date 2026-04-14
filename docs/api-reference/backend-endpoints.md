@@ -19,6 +19,13 @@ Create a new thread.
 ### `GET /threads/{id}`
 Get thread metadata.
 
+### `PATCH /threads/{id}`
+Update thread metadata.
+- **Body**: `{ "title": "optional title" }`
+
+### `DELETE /threads/{id}`
+Delete a thread and its related messages, runs, events, file metadata, sandbox mapping metadata, and stored thread objects.
+
 ### `GET /threads/{id}/messages`
 Retrieve message history.
 

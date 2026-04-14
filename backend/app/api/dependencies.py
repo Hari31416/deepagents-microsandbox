@@ -36,8 +36,8 @@ def get_services() -> ServiceContainer:
     message_repository = ThreadMessageRepository(session_factory=session_factory)
     run_event_repository = ThreadRunEventRepository(session_factory=session_factory)
     run_repository = ThreadRunRepository(session_factory=session_factory)
-    thread_service = ThreadService(repository=thread_repository)
     minio_storage = MinioStorage(settings)
+    thread_service = ThreadService(repository=thread_repository, storage=minio_storage)
     file_service = FileService(
         thread_service=thread_service,
         storage=minio_storage,

@@ -71,6 +71,11 @@ class MinioStorage:
             content_type=content_type or "application/octet-stream",
         )
 
+    def delete_prefix(self, prefix: str) -> None:
+        objects = self._client.list_objects(self.bucket_name, prefix=prefix, recursive=True)
+        for obj in objects:
+            self._client.remove_object(self.bucket_name, obj.object_name)
+
     @staticmethod
     def _expires_at(expires: timedelta) -> str:
         return (datetime.now(timezone.utc) + expires).isoformat()

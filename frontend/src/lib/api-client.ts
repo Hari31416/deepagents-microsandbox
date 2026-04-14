@@ -81,6 +81,8 @@ export const threadsApi = {
   list: () => apiClient.get<{ threads: Thread[] }>("/threads").then((r) => r.data),
   create: (title?: string) => apiClient.post<Thread>("/threads", { title }).then((r) => r.data),
   get: (id: string) => apiClient.get<Thread>(`/threads/${id}`).then((r) => r.data),
+  update: (id: string, title?: string | null) => apiClient.patch<Thread>(`/threads/${id}`, { title }).then((r) => r.data),
+  delete: (id: string) => apiClient.delete(`/threads/${id}`).then((r) => r.data),
   getMessages: (id: string) => apiClient.get<{ messages: ThreadMessage[] }>(`/threads/${id}/messages`).then((r) => r.data),
   getEvents: (id: string, params?: { run_id?: string }) =>
     apiClient.get<{ events: ThreadRunEvent[] }>(`/threads/${id}/events`, { params }).then((r) => r.data),

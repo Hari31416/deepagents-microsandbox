@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, delete, desc, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db.models import Thread, ThreadFile, ThreadMessage, ThreadRun, ThreadRunEvent, ThreadSandboxSession, User
@@ -100,6 +100,22 @@ class ThreadRepository:
             session.commit()
             session.refresh(record)
             return record
+
+    def delete_thread(self, *, owner_id: str, thread_id: str) -> bool:
+        with self._session_factory() as session:
+            statement = select(Thread).where(Thread.id == thread_id, Thread.owner_id == owner_id)
+            record = session.scalar(statement)
+            if record is None:
+                return False
+
+            session.execute(delete(ThreadRunEvent).where(ThreadRunEvent.thread_id == thread_id))
+            session.execute(delete(ThreadMessage).where(ThreadMessage.thread_id == thread_id))
+            session.execute(delete(ThreadFile).where(ThreadFile.thread_id == thread_id))
+            session.execute(delete(ThreadSandboxSession).where(ThreadSandboxSession.thread_id == thread_id))
+            session.execute(delete(ThreadRun).where(ThreadRun.thread_id == thread_id))
+            session.delete(record)
+            session.commit()
+            return True
 
     @staticmethod
     def _ensure_user(*, session, user_id: str) -> None:
