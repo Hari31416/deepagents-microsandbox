@@ -20,9 +20,17 @@ export function Sidebar() {
 
   if (!isSidebarOpen) {
     return (
-      <div className="flex flex-col items-center py-6 w-16 border-r border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl">
+      <div className="flex flex-col items-center py-6 w-16 border-r border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl gap-4">
         <Button variant="ghost" size="icon" onClick={toggleSidebar} className="rounded-full hover:bg-primary/5 hover:text-primary transition-all">
           <Menu className="h-5 w-5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleCreateThread}
+          className="rounded-full bg-slate-900 dark:bg-primary text-white hover:bg-slate-800 dark:hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all active:scale-95"
+        >
+          <Plus className="h-5 w-5" />
         </Button>
       </div>
     )

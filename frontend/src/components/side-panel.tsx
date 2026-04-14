@@ -12,7 +12,7 @@ export function SidePanel() {
   const { activeThreadId, threadFiles, setThreadFiles, isWorkspaceOpen, toggleWorkspace } = useStore()
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState("files")
-  
+
   const files = activeThreadId ? threadFiles[activeThreadId] || [] : []
 
   const fetchFiles = async () => {
@@ -54,7 +54,7 @@ export function SidePanel() {
 
   return (
     <aside className={cn(
-      "w-80 border-l border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl flex flex-col h-full overflow-hidden relative z-30 transition-all duration-300",
+      "w-[340px] border-l border-border/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl flex flex-col h-full overflow-hidden relative z-30 transition-all duration-300",
       !isWorkspaceOpen && "w-0 border-none px-0"
     )}>
       <div className="p-6 border-b border-border/50 flex items-center justify-between">
@@ -83,7 +83,7 @@ export function SidePanel() {
         </div>
 
         <TabsContent value="files" className="flex-1 overflow-hidden mt-0">
-          <ScrollArea className="h-full px-6 py-6">
+          <ScrollArea className="h-full px-2 py-6">
             <div className="space-y-3">
               {files.filter(f => f.purpose === "upload").length === 0 ? (
                 <div className="py-24 text-center space-y-4">
@@ -102,7 +102,7 @@ export function SidePanel() {
         </TabsContent>
 
         <TabsContent value="artifacts" className="flex-1 overflow-hidden mt-0">
-          <ScrollArea className="h-full px-6 py-6">
+          <ScrollArea className="h-full px-2 py-6">
             <div className="space-y-3">
               {files.filter(f => f.purpose !== "upload").length === 0 ? (
                 <div className="py-24 text-center space-y-4">
@@ -126,7 +126,7 @@ export function SidePanel() {
 
 function FileItem({ file, onDownload, icon }: { file: ThreadFile, onDownload: () => void, icon: React.ReactNode }) {
   return (
-    <div className="group flex items-center justify-between p-3 rounded-2xl border border-slate-100 dark:border-slate-800/50 hover:border-primary/20 hover:bg-white dark:hover:bg-slate-900/60 transition-all shadow-sm hover:shadow-md">
+    <div className="group flex items-center justify-between p-3 rounded-2xl border border-slate-100 dark:border-slate-800/50 hover:border-primary/20 hover:bg-white dark:hover:bg-slate-900/60 transition-all shadow-sm hover:shadow-md mx-0.5">
       <div className="flex items-center gap-4 min-w-0">
         <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-primary transition-colors shrink-0">
           {icon}
