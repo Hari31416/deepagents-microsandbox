@@ -3,6 +3,9 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_AUTH_SECRET_KEY = "deepagent-dev-secret"
+DEFAULT_SUPER_ADMIN_PASSWORD = "ChangeMe123!"
+
 
 class Settings(BaseSettings):
     app_name: str = "deepagent-sandbox-backend"
@@ -22,14 +25,17 @@ class Settings(BaseSettings):
     minio_bucket: str = "deepagent"
     minio_secure: bool = False
     presigned_url_expiry_seconds: int = 900
-    auth_secret_key: str = "deepagent-dev-secret"
+    auth_secret_key: str = DEFAULT_AUTH_SECRET_KEY
     auth_access_cookie_name: str = "deepagent_access_token"
     auth_refresh_cookie_name: str = "deepagent_refresh_token"
     auth_access_token_ttl_seconds: int = 3600
     auth_refresh_token_ttl_seconds: int = 604800
     auth_cookie_secure: bool = False
+    auth_login_max_attempts: int = 5
+    auth_login_window_seconds: int = 300
+    auth_login_lockout_seconds: int = 900
     super_admin_email: str = "superadmin@deepagent.local"
-    super_admin_password: str = "ChangeMe123!"
+    super_admin_password: str = DEFAULT_SUPER_ADMIN_PASSWORD
     super_admin_name: str = "Super Admin"
 
     model_config = SettingsConfigDict(
@@ -45,6 +51,29 @@ class Settings(BaseSettings):
             self.database_url = self.postgres_uri.replace(
                 "postgresql://", "postgresql+psycopg://", 1
             )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_secure_auth_defaults(self) -> "Settings":
+        if self.app_env.strip().lower() in {
+            "development",
+            "dev",
+            "local",
+            "test",
+            "testing",
+        }:
+            return self
+
+        if self.auth_secret_key == DEFAULT_AUTH_SECRET_KEY:
+            raise ValueError("AUTH_SECRET_KEY must be changed outside development")
+        if len(self.auth_secret_key) < 32:
+            raise ValueError(
+                "AUTH_SECRET_KEY must be at least 32 characters outside development"
+            )
+        if self.super_admin_password == DEFAULT_SUPER_ADMIN_PASSWORD:
+            raise ValueError("SUPER_ADMIN_PASSWORD must be changed outside development")
+        if not self.auth_cookie_secure:
+            raise ValueError("AUTH_COOKIE_SECURE must be true outside development")
         return self
 
     @property

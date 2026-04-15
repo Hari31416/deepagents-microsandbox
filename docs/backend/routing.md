@@ -25,8 +25,8 @@ API routes are organized by feature in the `app/api/routes` directory.
 - **Responsibilities**: Secure file handling via presigned URLs.
 - **Endpoints**:
     - `POST /presign-upload`: Generate a URL for direct upload to MinIO.
-    - `POST /complete-upload`: Register an uploaded file in the database.
-    - `POST /presign-download`: Generate a URL for downloading a file.
+    - `POST /complete-upload`: Register an uploaded file in the database using the server-issued `file_id` intent.
+    - `POST /presign-download`: Generate a URL for downloading a DB-backed file by `file_id`.
 
 ### 4. Chat (`chat.py`)
 - **Prefix**: `/api/chat`
@@ -36,4 +36,4 @@ API routes are organized by feature in the `app/api/routes` directory.
 
 ## Route Protection
 
-Routes are typically protected by a `X-User-Id` header, which is extracted and validated via dependencies defined in `app/api/dependencies.py`.
+Routes are protected by authenticated bearer/cookie session resolution in `app/api/auth.py`, and authorization checks are enforced in the service layer.

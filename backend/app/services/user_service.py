@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
-from app.db.repositories import UserRecord, UserRepository
+from app.db.repositories import RefreshTokenRepository, UserRecord, UserRepository
 from app.security import (
     ALL_ROLES,
     ALL_STATUSES,
@@ -35,9 +35,11 @@ class UserService:
         self,
         repository: UserRepository,
         audit_service: AuditService,
+        refresh_token_repository: RefreshTokenRepository,
     ) -> None:
         self._repository = repository
         self._audit_service = audit_service
+        self._refresh_token_repository = refresh_token_repository
 
     def list_users(self) -> list[dict[str, object]]:
         return [
@@ -122,13 +124,16 @@ class UserService:
             role=role,
             status=status,
         )
+        sessions_revoked = 0
+        if self._has_sensitive_session_change(target=target, role=role, status=status):
+            sessions_revoked = self._refresh_token_repository.revoke_all_tokens_for_user(user_id)
         self._audit_service.log(
             action="user_updated",
             actor_id=actor_id,
             actor_role=actor_role,
             target_type="user",
             target_id=user_id,
-            payload={"role": role, "status": status},
+            payload={"role": role, "status": status, "sessions_revoked": sessions_revoked},
         )
         return asdict(self._to_summary(record))
 
@@ -148,12 +153,14 @@ class UserService:
             user_id=user_id,
             password_hash=password_hash,
         )
+        sessions_revoked = self._refresh_token_repository.revoke_all_tokens_for_user(user_id)
         self._audit_service.log(
             action="password_reset",
             actor_id=actor_id,
             actor_role=actor_role,
             target_type="user",
             target_id=user_id,
+            payload={"sessions_revoked": sessions_revoked},
         )
         return asdict(self._to_summary(record))
 
@@ -198,6 +205,17 @@ class UserService:
         if actor_role == ROLE_ADMIN and target_role == ROLE_USER:
             return
         raise PermissionError("You are not allowed to manage that user")
+
+    @staticmethod
+    def _has_sensitive_session_change(
+        *,
+        target: UserRecord,
+        role: str | None,
+        status: str | None,
+    ) -> bool:
+        return (role is not None and role != target.role) or (
+            status is not None and status != target.status
+        )
 
     @staticmethod
     def _to_summary(record: UserRecord) -> UserSummary:

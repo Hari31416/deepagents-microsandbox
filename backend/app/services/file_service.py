@@ -1,9 +1,13 @@
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from mimetypes import guess_type
 from posixpath import basename
-from typing import Any, Literal
+from threading import Lock
+from typing import Any
+
 from app.db.repositories import FileRepository
 from app.storage.minio import MinioStorage
+
 
 @dataclass
 class FileRecord:
@@ -16,8 +20,21 @@ class FileRecord:
     status: str
     created_at: str
 
-class FileService:
 
+@dataclass(frozen=True)
+class UploadIntent:
+    file_id: str
+    actor_user_id: str
+    thread_id: str
+    object_key: str
+    original_filename: str
+    content_type: str
+    size: int
+    purpose: str
+    expires_at: datetime
+
+
+class FileService:
     def __init__(
         self,
         repository: FileRepository,
@@ -27,6 +44,8 @@ class FileService:
         self._repository = repository
         self._thread_service = thread_service
         self._storage = storage
+        self._upload_intents: dict[str, UploadIntent] = {}
+        self._upload_intents_lock = Lock()
 
     def create_upload_ticket(
         self,
@@ -51,9 +70,27 @@ class FileService:
             if not thread:
                 raise ValueError("Thread not found")
 
+        normalized_filename = basename(filename.strip())
+        if not normalized_filename:
+            raise ValueError("Filename may not be empty")
+
         file_id = self._storage.allocate_file_id()
-        object_key = f"{thread_id}/{file_id}/{filename}"
+        object_key = f"{thread_id}/{file_id}/{normalized_filename}"
         ticket = self._storage.create_presigned_upload(object_key)
+        self._store_upload_intent(
+            UploadIntent(
+                file_id=file_id,
+                actor_user_id=actor_user_id,
+                thread_id=thread_id,
+                object_key=object_key,
+                original_filename=normalized_filename,
+                content_type=content_type,
+                size=size,
+                purpose=purpose,
+                expires_at=datetime.now(UTC)
+                + timedelta(seconds=self._storage.presigned_url_expiry_seconds),
+            )
+        )
 
         return {
             "file_id": file_id,
@@ -71,11 +108,7 @@ class FileService:
         actor_user_id: str,
         actor_role: str,
         thread_id: str,
-        object_key: str,
-        original_filename: str,
-        content_type: str,
-        size: int,
-        purpose: str = "upload",
+        file_id: str,
     ) -> dict[str, Any]:
         if self._thread_service:
             thread = self._thread_service.get_thread_for_actor(
@@ -86,15 +119,46 @@ class FileService:
             if not thread:
                 raise ValueError("Thread not found")
 
-        record = self._repository.create_file(
+        existing = self._repository.get_file(thread_id=thread_id, file_id=file_id)
+        if existing is not None:
+            self._assert_valid_thread_object_key(
+                thread_id=thread_id,
+                object_key=existing.object_key,
+                expected_file_id=file_id,
+            )
+            return asdict(self._to_record(existing))
+
+        intent = self._get_upload_intent(
+            actor_user_id=actor_user_id,
             thread_id=thread_id,
-            object_key=object_key,
-            filename=original_filename,
-            kind=purpose,
-            content_type=content_type,
-            size=size,
+            file_id=file_id,
+        )
+        if intent is None:
+            raise ValueError("Upload ticket expired or not found")
+
+        if not self._storage:
+            raise ValueError("Storage not configured")
+        try:
+            object_metadata = self._storage.stat_object(intent.object_key)
+        except Exception as exc:
+            raise ValueError("Uploaded object not found") from exc
+
+        self._assert_valid_thread_object_key(
+            thread_id=thread_id,
+            object_key=object_metadata.object_key,
+            expected_file_id=file_id,
+        )
+        record = self._repository.create_file(
+            file_id=file_id,
+            thread_id=thread_id,
+            object_key=intent.object_key,
+            filename=intent.original_filename,
+            kind=intent.purpose,
+            content_type=object_metadata.content_type or intent.content_type,
+            size=object_metadata.size,
             status="completed",
         )
+        self._consume_upload_intent(file_id)
         return asdict(self._to_record(record))
 
     def create_download_ticket(
@@ -102,8 +166,7 @@ class FileService:
         actor_user_id: str,
         actor_role: str,
         thread_id: str,
-        file_id: str | None = None,
-        object_key: str | None = None,
+        file_id: str,
     ) -> dict[str, Any]:
         if not self._storage:
             raise ValueError("Storage not configured")
@@ -117,19 +180,19 @@ class FileService:
             if not thread:
                 raise ValueError("Thread not found")
 
-        if not object_key and file_id:
-            record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
-            if not record:
-                raise ValueError("File not found")
-            object_key = record.object_key
+        record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
+        if not record:
+            raise ValueError("File not found")
+        self._assert_valid_thread_object_key(
+            thread_id=thread_id,
+            object_key=record.object_key,
+            expected_file_id=file_id,
+        )
 
-        if not object_key:
-            raise ValueError("Either file_id or object_key must be provided")
-
-        ticket = self._storage.create_presigned_download(object_key)
+        ticket = self._storage.create_presigned_download(record.object_key)
         return {
             "thread_id": thread_id,
-            "object_key": object_key,
+            "object_key": record.object_key,
             "url": ticket.url,
             "required_headers": ticket.required_headers,
             "expires_at": ticket.expires_at,
@@ -229,3 +292,52 @@ class FileService:
             status=record.status,
             created_at=record.created_at.isoformat(),
         )
+
+    def _store_upload_intent(self, intent: UploadIntent) -> None:
+        now = datetime.now(UTC)
+        with self._upload_intents_lock:
+            self._prune_expired_upload_intents(now)
+            self._upload_intents[intent.file_id] = intent
+
+    def _get_upload_intent(
+        self,
+        *,
+        actor_user_id: str,
+        thread_id: str,
+        file_id: str,
+    ) -> UploadIntent | None:
+        now = datetime.now(UTC)
+        with self._upload_intents_lock:
+            self._prune_expired_upload_intents(now)
+            intent = self._upload_intents.get(file_id)
+            if intent is None:
+                return None
+            if intent.actor_user_id != actor_user_id or intent.thread_id != thread_id:
+                return None
+            return intent
+
+    def _consume_upload_intent(self, file_id: str) -> None:
+        with self._upload_intents_lock:
+            self._upload_intents.pop(file_id, None)
+
+    def _prune_expired_upload_intents(self, now: datetime) -> None:
+        expired_ids = [
+            file_id
+            for file_id, intent in self._upload_intents.items()
+            if intent.expires_at <= now
+        ]
+        for file_id in expired_ids:
+            self._upload_intents.pop(file_id, None)
+
+    @staticmethod
+    def _assert_valid_thread_object_key(
+        *,
+        thread_id: str,
+        object_key: str,
+        expected_file_id: str | None = None,
+    ) -> None:
+        expected_prefix = f"{thread_id}/"
+        if expected_file_id is not None:
+            expected_prefix = f"{thread_id}/{expected_file_id}/"
+        if not object_key.startswith(expected_prefix):
+            raise ValueError("File not found")

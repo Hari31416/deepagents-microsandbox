@@ -32,7 +32,8 @@ List threads. Visibility is role-dependent.
 - **Role Required**: Authenticated
 - **Visibility**: 
     - `user`: Own threads only.
-    - `admin` / `super_admin`: All system threads.
+    - `admin`: Own threads plus regular-user threads.
+    - `super_admin`: All system threads.
 
 ### `POST /threads`
 Create a new thread.
@@ -95,10 +96,14 @@ Generate a presigned MinIO URL for uploading files.
 ### `POST /files/complete-upload`
 Finalize file registration after binary transport.
 - **Role Required**: Authenticated (Owner or Admin)
+- **Body**: `{ "thread_id": "...", "file_id": "..." }`
+- **Notes**: The backend resolves filename, object key, size, and content type from the server-issued upload intent and stored object metadata.
 
 ### `POST /files/presign-download`
 Generate a temporary download link.
 - **Role Required**: Authenticated (Owner or Admin)
+- **Body**: `{ "thread_id": "...", "file_id": "..." }`
+- **Notes**: Raw `object_key` download presigning is not exposed to clients.
 
 ---
 

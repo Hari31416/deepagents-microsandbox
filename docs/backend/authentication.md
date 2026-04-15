@@ -48,3 +48,6 @@ The system provides two primary helper dependencies to enforce higher-level acce
 ## Security Considerations
 - **Password Hashing**: Uses `scrypt` with a 16-byte salt and high iteration counts.
 - **Refresh Token Isolation**: Refresh tokens are stored in the database and hashed (`SHA256`) before comparison to prevent database leak vulnerabilities.
+- **Session Revocation**: Password resets and role/status transitions revoke all active refresh tokens for the affected user.
+- **Login Throttling**: Login attempts are rate-limited with per-email and per-IP tracking to slow brute-force attacks.
+- **Secure Production Defaults**: Non-development environments reject default auth secrets, default super-admin passwords, and insecure cookie transport settings at startup.

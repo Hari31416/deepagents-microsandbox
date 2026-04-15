@@ -19,17 +19,12 @@ class PresignUploadRequest(BaseModel):
 
 class CompleteUploadRequest(BaseModel):
     thread_id: str
-    object_key: str = Field(min_length=1)
-    original_filename: str = Field(min_length=1, max_length=512)
-    content_type: str = Field(min_length=1, max_length=200)
-    size: int = Field(gt=0)
-    purpose: Literal["upload", "artifact"] = "upload"
+    file_id: str = Field(min_length=1)
 
 
 class PresignDownloadRequest(BaseModel):
     thread_id: str
-    file_id: str | None = None
-    object_key: str | None = None
+    file_id: str = Field(min_length=1)
 
 
 @router.post("/presign-upload")
@@ -63,11 +58,7 @@ async def complete_upload(
             actor_user_id=user.user_id,
             actor_role=user.role,
             thread_id=payload.thread_id,
-            object_key=payload.object_key,
-            original_filename=payload.original_filename,
-            content_type=payload.content_type,
-            size=payload.size,
-            purpose=payload.purpose,
+            file_id=payload.file_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -85,7 +76,6 @@ async def presign_download(
             actor_role=user.role,
             thread_id=payload.thread_id,
             file_id=payload.file_id,
-            object_key=payload.object_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

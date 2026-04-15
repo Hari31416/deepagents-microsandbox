@@ -13,7 +13,7 @@ Defined in `app/services/`.
 Responsible for the lifecycle of conversations and enforcing role-based visibility rules.
 
 - **`create_thread`**: Initializes a new conversation with an optional title.
-- **`list_threads`**: Dynamically filters threads. Admins/Super Admins receive every thread in the system, while regular Users are restricted to threads where they are the `owner_id`.
+- **`list_threads`**: Dynamically filters threads. Super Admins receive every thread, Admins receive their own plus regular-user threads, and Users are restricted to threads where they are the `owner_id`.
 - **`get_thread_for_actor`**: A security-conscious getter that verifies permissions before returning thread metadata.
 - **`update_thread_title`**: Allows owners (and admins) to rename conversations.
 - **`delete_thread`**: Handles soft-deletion and triggers cleanup of associated files in MinIO storage.
@@ -25,6 +25,7 @@ Responsible for the lifecycle of conversations and enforcing role-based visibili
 ### `FileService`
 - **Responsibility**: File lifecycle management, presigned URL generation, and artifact handling.
 - **Key Methods**: `get_presigned_upload`, `complete_upload`, `get_presigned_download`, `get_thread_files`.
+- **Security Model**: Upload completion is bound to a server-issued upload intent, and download presigning resolves files strictly from DB-backed `file_id` records.
 
 ### `RunService`
 - **Responsibility**: Management of `ThreadRun` and `ThreadRunEvent` records.

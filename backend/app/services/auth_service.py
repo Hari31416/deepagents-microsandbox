@@ -20,6 +20,7 @@ from app.security import (
     verify_password,
 )
 from app.services.audit_service import AuditService
+from app.services.login_throttle_service import LoginThrottleService
 from app.services.user_service import UserService
 
 
@@ -32,12 +33,14 @@ class AuthService:
         refresh_token_repository: RefreshTokenRepository,
         user_service: UserService,
         audit_service: AuditService,
+        login_throttle_service: LoginThrottleService,
     ) -> None:
         self._settings = settings
         self._user_repository = user_repository
         self._refresh_token_repository = refresh_token_repository
         self._user_service = user_service
         self._audit_service = audit_service
+        self._login_throttle_service = login_throttle_service
 
     def ensure_seeded_super_admin(self) -> None:
         self._user_service.ensure_seeded_super_admin(
@@ -46,10 +49,24 @@ class AuthService:
             password_hash=hash_password(self._settings.super_admin_password),
         )
 
-    def authenticate(self, *, email: str, password: str) -> dict[str, object]:
+    def authenticate(
+        self,
+        *,
+        email: str,
+        password: str,
+        client_ip: str | None = None,
+    ) -> dict[str, object]:
         normalized_email = normalize_email(email)
+        self._login_throttle_service.check_allowed(
+            email=normalized_email,
+            client_ip=client_ip,
+        )
         user = self._user_repository.get_by_email(normalized_email)
         if user is None or not verify_password(password, user.password_hash):
+            self._login_throttle_service.record_failure(
+                email=normalized_email,
+                client_ip=client_ip,
+            )
             self._audit_service.log(
                 action="login_failed",
                 actor_id=None,
@@ -60,6 +77,10 @@ class AuthService:
             )
             raise ValueError("Invalid email or password")
         if user.status != STATUS_ACTIVE:
+            self._login_throttle_service.record_failure(
+                email=normalized_email,
+                client_ip=client_ip,
+            )
             raise PermissionError("Your account is disabled")
 
         self._user_service.mark_last_login(user.user_id)
@@ -67,6 +88,10 @@ class AuthService:
         fresh_user = self._user_service.get_active_user_by_id(user.user_id)
         if fresh_user is None:
             raise PermissionError("Your account is disabled")
+        self._login_throttle_service.record_success(
+            email=normalized_email,
+            client_ip=client_ip,
+        )
         self._audit_service.log(
             action="login_succeeded",
             actor_id=user.user_id,

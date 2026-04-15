@@ -9,33 +9,27 @@ The system defines three distinct roles, each with increasing levels of authorit
 | Role Const | Value | Description |
 | :--- | :--- | :--- |
 | `ROLE_SUPER_ADMIN` | `super_admin` | Absolute control; management of all users and resources. |
-| `ROLE_ADMIN` | `admin` | Elevated visibility; can view all threads/messages but cannot manage Super Admins. |
+| `ROLE_ADMIN` | `admin` | Elevated visibility; can view their own threads plus regular user threads, but cannot access Super Admin or peer Admin threads. |
 | `ROLE_USER` | `user` | Standard access; limited strictly to their own data. |
 
 ## Permission Enforcement Pattern
 
 Permissions are checked at the **Service Layer** to ensure that even if an API endpoint is exposed, the underlying data access is protected.
 
-### 1. The "Privileged Role" Concept
-A core utility function `is_privileged_role(role)` determines if an actor is an Admin or Super Admin.
-
-```python
-def is_privileged_role(role: str) -> bool:
-    return role in {ROLE_SUPER_ADMIN, ROLE_ADMIN}
-```
-
-### 2. Thread Visibility Logic
-In the `ThreadService`, listing threads uses this check to decide whether to apply an `owner_id` filter.
+### 1. Thread Visibility Logic
+In the `ThreadService`, access is role-specific rather than using a single "privileged" branch.
 
 ```python
 def list_threads(self, actor_user_id: str, actor_role: str):
-    if is_privileged_role(actor_role):
+    if actor_role == ROLE_SUPER_ADMIN:
         return self._repository.list_all_threads()
+    if actor_role == ROLE_ADMIN:
+        return self._repository.list_admin_visible_threads(actor_user_id)
     return self._repository.list_threads(owner_id=actor_user_id)
 ```
 
-### 3. Resource-Level Checks
-For specific actions (Update, Delete, View Message), the system uses `get_thread_for_actor` which follows the same privileged logic but also ensures that standard `user` roles can only retrieve threads they own.
+### 2. Resource-Level Checks
+For specific actions (Update, Delete, View Message), the system uses `get_thread_for_actor` with the same hierarchy. This prevents an `admin` from bypassing the list view and directly opening a `super_admin` or peer `admin` thread by ID.
 
 ## Audit Logging
 All authorization decisions and subsequent data access are logged by the `AuditService`. Key fields logged include:
@@ -50,8 +44,11 @@ All authorization decisions and subsequent data access are logged by the `AuditS
 | :--- | :---: | :---: | :---: |
 | Create Thread | ✅ | ✅ | ✅ |
 | List Own Threads | ✅ | ✅ | ✅ |
-| List ALL Threads | ❌ | ✅ | ✅ |
+| List User Threads | ❌ | ✅ | ✅ |
+| List Peer Admin Threads | ❌ | ❌ | ✅ |
+| List Super Admin Threads | ❌ | ❌ | ✅ |
 | Delete Own Thread | ✅ | ✅ | ✅ |
-| Delete Any Thread | ❌ | ✅ | ✅ |
+| Delete User Thread | ❌ | ✅ | ✅ |
+| Delete Peer Admin / Super Admin Thread | ❌ | ❌ | ✅ |
 | Manage Users | ❌ | ✅ | ✅ |
 | Create Super Admin | ❌ | ❌ | ✅ |

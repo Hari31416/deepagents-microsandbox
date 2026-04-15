@@ -68,11 +68,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
 
         await filesApi.completeUpload({
           thread_id: activeThreadId,
-          object_key: presign.object_key,
-          original_filename: file.name,
-          content_type: file.type || "application/octet-stream",
-          size: file.size,
-          purpose: "upload"
+          file_id: presign.file_id,
         })
       }
 

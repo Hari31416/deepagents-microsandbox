@@ -129,17 +129,12 @@ export const filesApi = {
 
   completeUpload: (params: {
     thread_id: string
-    object_key: string
-    original_filename: string
-    content_type: string
-    size: number
-    purpose: "upload"
+    file_id: string
   }) => apiClient.post<ThreadFile>("/files/complete-upload", params).then((r) => r.data),
 
   presignDownload: (params: {
     thread_id: string
-    file_id?: string
-    object_key?: string
+    file_id: string
   }) => apiClient.post<PresignedDownload>("/files/presign-download", params).then((r) => r.data),
 }
 

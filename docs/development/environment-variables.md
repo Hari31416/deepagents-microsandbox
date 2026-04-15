@@ -14,6 +14,12 @@ The system uses environment variables for configuration across all components.
 | `MINIO_ENDPOINT` | `localhost:9000` | MinIO server address |
 | `MINIO_ACCESS_KEY` | `minioadmin` | MinIO credentials |
 | `MINIO_SECRET_KEY` | `minioadminpassword` | MinIO credentials |
+| `AUTH_SECRET_KEY` | `deepagent-dev-secret` | HMAC signing key for access tokens; must be overridden outside development |
+| `AUTH_COOKIE_SECURE` | `false` | Whether auth cookies require HTTPS; must be `true` outside development |
+| `AUTH_LOGIN_MAX_ATTEMPTS` | `5` | Failed login attempts allowed per email/IP window |
+| `AUTH_LOGIN_WINDOW_SECONDS` | `300` | Sliding window for failed login attempt counting |
+| `AUTH_LOGIN_LOCKOUT_SECONDS` | `900` | Temporary lockout duration after repeated failed logins |
+| `SUPER_ADMIN_PASSWORD` | `ChangeMe123!` | Seed password for the initial super-admin; must be overridden outside development |
 
 ## Frontend Variables (`frontend/.env`)
 

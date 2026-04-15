@@ -16,6 +16,7 @@ from app.db.session import get_session_factory, init_database
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.file_service import FileService
+from app.services.login_throttle_service import LoginThrottleService
 from app.services.message_service import MessageService
 from app.services.run_event_service import RunEventService
 from app.services.run_service import RunService
@@ -56,13 +57,19 @@ def get_services() -> ServiceContainer:
     run_repository = ThreadRunRepository(session_factory=session_factory)
     minio_storage = MinioStorage(settings)
     audit_service = AuditService(repository=audit_repository)
-    user_service = UserService(repository=user_repository, audit_service=audit_service)
+    login_throttle_service = LoginThrottleService(settings=settings)
+    user_service = UserService(
+        repository=user_repository,
+        audit_service=audit_service,
+        refresh_token_repository=refresh_token_repository,
+    )
     auth_service = AuthService(
         settings=settings,
         user_repository=user_repository,
         refresh_token_repository=refresh_token_repository,
         user_service=user_service,
         audit_service=audit_service,
+        login_throttle_service=login_throttle_service,
     )
     auth_service.ensure_seeded_super_admin()
     thread_service = ThreadService(repository=thread_repository, storage=minio_storage)

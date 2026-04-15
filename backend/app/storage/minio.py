@@ -16,6 +16,13 @@ class PresignedUrl:
     required_headers: dict[str, str]
 
 
+@dataclass(frozen=True)
+class StoredObjectMetadata:
+    object_key: str
+    size: int
+    content_type: str | None
+
+
 class MinioStorage:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -29,6 +36,10 @@ class MinioStorage:
     @property
     def bucket_name(self) -> str:
         return self._settings.minio_bucket
+
+    @property
+    def presigned_url_expiry_seconds(self) -> int:
+        return self._settings.presigned_url_expiry_seconds
 
     @staticmethod
     def allocate_file_id() -> str:
@@ -52,6 +63,14 @@ class MinioStorage:
             url=url,
             expires_at=self._expires_at(expires),
             required_headers={},
+        )
+
+    def stat_object(self, object_key: str) -> StoredObjectMetadata:
+        stat = self._client.stat_object(self.bucket_name, object_key)
+        return StoredObjectMetadata(
+            object_key=getattr(stat, "object_name", object_key),
+            size=int(stat.size),
+            content_type=getattr(stat, "content_type", None),
         )
 
     def get_object(self, object_key: str) -> bytes:

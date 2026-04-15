@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import asc, delete, desc, select
+from sqlalchemy import asc, delete, desc, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import (
@@ -17,6 +17,7 @@ from app.db.models import (
     ThreadSandboxSession,
     User,
 )
+from app.security import ROLE_USER
 
 
 @dataclass(frozen=True)
@@ -253,6 +254,22 @@ class RefreshTokenRepository:
                 record.revoked_at = datetime.now(UTC)
                 session.commit()
 
+    def revoke_all_tokens_for_user(self, user_id: str) -> int:
+        now = datetime.now(UTC)
+        with self._session_factory() as session:
+            statement = (
+                update(RefreshToken)
+                .where(
+                    RefreshToken.user_id == user_id,
+                    RefreshToken.revoked_at.is_(None),
+                    RefreshToken.expires_at > now,
+                )
+                .values(revoked_at=now)
+            )
+            result = session.execute(statement)
+            session.commit()
+            return int(result.rowcount or 0)
+
     @staticmethod
     def _to_record(record: RefreshToken) -> RefreshTokenRecord:
         return RefreshTokenRecord(
@@ -320,9 +337,31 @@ class ThreadRepository:
             statement = select(Thread).order_by(desc(Thread.created_at))
             return list(session.scalars(statement))
 
+    def list_admin_visible_threads(self, admin_id: str) -> list[Thread]:
+        with self._session_factory() as session:
+            statement = (
+                select(Thread)
+                .join(User, Thread.owner_id == User.id)
+                .where(or_(Thread.owner_id == admin_id, User.role == ROLE_USER))
+                .order_by(desc(Thread.created_at))
+            )
+            return list(session.scalars(statement))
+
     def get_thread(self, thread_id: str) -> Thread | None:
         with self._session_factory() as session:
             return session.get(Thread, thread_id)
+
+    def get_admin_visible_thread(self, *, admin_id: str, thread_id: str) -> Thread | None:
+        with self._session_factory() as session:
+            statement = (
+                select(Thread)
+                .join(User, Thread.owner_id == User.id)
+                .where(
+                    Thread.id == thread_id,
+                    or_(Thread.owner_id == admin_id, User.role == ROLE_USER),
+                )
+            )
+            return session.scalar(statement)
 
     def get_thread_for_owner(self, owner_id: str, thread_id: str) -> Thread | None:
         with self._session_factory() as session:
@@ -372,6 +411,7 @@ class FileRepository:
     def create_file(
         self,
         *,
+        file_id: str | None = None,
         thread_id: str,
         object_key: str,
         filename: str,
@@ -381,15 +421,18 @@ class FileRepository:
         status: str,
     ) -> ThreadFile:
         with self._session_factory() as session:
-            record = ThreadFile(
-                thread_id=thread_id,
-                object_key=object_key,
-                filename=filename,
-                kind=kind,
-                content_type=content_type,
-                size=size,
-                status=status,
-            )
+            record_kwargs = {
+                "thread_id": thread_id,
+                "object_key": object_key,
+                "filename": filename,
+                "kind": kind,
+                "content_type": content_type,
+                "size": size,
+                "status": status,
+            }
+            if file_id is not None:
+                record_kwargs["id"] = file_id
+            record = ThreadFile(**record_kwargs)
             session.add(record)
             session.commit()
             session.refresh(record)
