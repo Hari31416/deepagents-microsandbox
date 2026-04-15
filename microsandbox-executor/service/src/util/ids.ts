@@ -15,6 +15,11 @@ export function createSandboxName(jobId: string) {
   return `exec-${digest}`;
 }
 
+export function createSessionSandboxName(sessionId: string) {
+  const digest = createHash("sha256").update(sessionId).digest("hex").slice(0, 12);
+  return `sess-${digest}`;
+}
+
 export function validateSessionId(sessionId: string) {
   if (!SESSION_ID_PATTERN.test(sessionId)) {
     throw new Error("Invalid session_id");

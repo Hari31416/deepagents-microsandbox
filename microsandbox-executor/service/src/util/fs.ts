@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { access, copyFile, mkdir, rm, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { dirname, normalize, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -9,6 +9,16 @@ export async function ensureDir(path: string) {
 
 export async function removeDirIfExists(path: string) {
   await rm(path, { recursive: true, force: true });
+}
+
+export async function removeFileIfExists(path: string) {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
 }
 
 export async function pathExists(path: string) {
@@ -57,4 +67,17 @@ export async function copyRelativeFile(sourceRoot: string, destinationRoot: stri
 
 export async function statWithin(root: string, relativePath: string) {
   return stat(resolveWithin(root, relativePath));
+}
+
+export async function listDirectoryNames(path: string) {
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
 }

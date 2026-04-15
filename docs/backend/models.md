@@ -41,6 +41,7 @@ Defined in `app/db/models.py`.
 - **Table**: `thread_sandbox_sessions`
 - **Purpose**: Maps a chat thread to a specific environment in the `microsandbox-executor`.
 - **Fields**: `thread_id`, `sandbox_session_id`, `executor_base_url`, `created_at`, `updated_at`.
+- **Lifecycle Note**: The backend consults this mapping during thread deletion so the executor can delete the live session before the database record is removed.
 
 ## Base Configuration
 

@@ -6,6 +6,7 @@ from app.db.repositories import (
     AuditLogRepository,
     FileRepository,
     RefreshTokenRepository,
+    SandboxSessionRepository,
     ThreadMessageRepository,
     ThreadRepository,
     ThreadRunEventRepository,
@@ -72,7 +73,14 @@ def get_services() -> ServiceContainer:
         login_throttle_service=login_throttle_service,
     )
     auth_service.ensure_seeded_super_admin()
-    thread_service = ThreadService(repository=thread_repository, storage=minio_storage)
+    sandbox_session_repository = SandboxSessionRepository(
+        session_factory=session_factory
+    )
+    thread_service = ThreadService(
+        repository=thread_repository,
+        storage=minio_storage,
+        sandbox_session_repository=sandbox_session_repository,
+    )
     file_service = FileService(
         thread_service=thread_service,
         storage=minio_storage,

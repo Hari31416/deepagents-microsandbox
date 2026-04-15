@@ -5,6 +5,7 @@ import { ZodError, z } from "zod";
 
 import type { AppServices } from "../app.js";
 import { normalizeRelativePath } from "../util/fs.js";
+import { sha256Buffer } from "../util/hash.js";
 import { createSessionId, sanitizeUploadedFilename, validateSessionId } from "../util/ids.js";
 
 const createSessionSchema = z
@@ -79,7 +80,22 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
           const relativePath = normalizeRelativePath(sanitizeUploadedFilename(part.filename ?? "upload.bin"));
           const contents = await part.toBuffer();
           await services.storage.saveUpload(sessionId, relativePath, contents, part.mimetype ?? null);
-          await services.metadata.upsertFile(sessionId, relativePath, contents.length, part.mimetype ?? null);
+
+          try {
+            await services.runtimeManager.mirrorUploadedFile(sessionId, relativePath, contents);
+            await services.metadata.upsertFile(
+              sessionId,
+              relativePath,
+              contents.length,
+              part.mimetype ?? null,
+              sha256Buffer(contents)
+            );
+          } catch (error) {
+            await services.storage.deleteFile(sessionId, relativePath);
+            await services.runtimeManager.mirrorDeletedFile(sessionId, relativePath);
+            throw error;
+          }
+
           uploadedFiles.push({
             path: relativePath,
             size: contents.length,
@@ -201,6 +217,39 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
     }
   });
 
+  app.delete("/v1/sessions/:sessionId/files/*", async (request, reply) => {
+    const params = request.params as { sessionId?: string; "*": string };
+    const sessionId = params.sessionId;
+
+    if (!sessionId) {
+      return reply.code(400).send({ error: "sessionId is required" });
+    }
+
+    try {
+      validateSessionId(sessionId);
+      const relativePath = normalizeRelativePath(params["*"]);
+      await services.locks.runExclusive(sessionId, async () => {
+        await services.metadata.getRequiredSession(sessionId);
+        const metadata = await services.metadata.getFile(sessionId, relativePath);
+
+        if (!metadata) {
+          throw new Error("File not found");
+        }
+
+        await services.storage.deleteFile(sessionId, relativePath);
+        await services.runtimeManager.mirrorDeletedFile(sessionId, relativePath);
+        await services.metadata.deleteFile(sessionId, relativePath);
+        await services.metadata.touchSession(sessionId);
+      });
+
+      return reply.code(204).send();
+    } catch (error) {
+      return reply.code(resolveSessionErrorStatus(error, 404)).send({
+        error: error instanceof Error ? error.message : "File deletion failed"
+      });
+    }
+  });
+
   app.delete("/v1/sessions/:sessionId", async (request, reply) => {
     const params = request.params as { sessionId?: string };
     const sessionId = params.sessionId;
@@ -223,6 +272,7 @@ export async function registerSessionRoutes(app: FastifyInstance, services: AppS
           throw new Error("Session cannot be deleted right now");
         }
 
+        await services.runtimeManager.teardownSession(sessionId);
         await services.storage.deleteSession(sessionId);
         await services.metadata.deleteSession(sessionId);
       });

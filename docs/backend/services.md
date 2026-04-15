@@ -34,6 +34,7 @@ Responsible for the lifecycle of conversations and enforcing role-based visibili
 ### `RuntimeService`
 - **Responsibility**: Direct communication with the `microsandbox-executor`.
 - **Key Methods**: `run_code`, `list_session_files`, `get_session_id`.
+- **Lifecycle Note**: Thread deletion now tears down the mapped executor session before the backend removes the thread row, which keeps long-lived sandbox state aligned with thread ownership.
 
 ### `StreamService`
 - **Responsibility**: Orchestrating the streaming agent logic and yielding events to the API layer.

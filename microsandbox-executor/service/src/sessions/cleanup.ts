@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { MetadataStore } from "../metadata/types.js";
 import type { SessionStorage } from "../storage/types.js";
 import { SessionLockManager } from "./locks.js";
+import { SessionRuntimeManager } from "./runtime_manager.js";
 
 export class SessionCleanupService {
   private intervalHandle: NodeJS.Timeout | null = null;
@@ -10,7 +11,8 @@ export class SessionCleanupService {
     private readonly config: AppConfig,
     private readonly storage: SessionStorage,
     private readonly metadata: MetadataStore,
-    private readonly locks: SessionLockManager
+    private readonly locks: SessionLockManager,
+    private readonly runtimeManager: SessionRuntimeManager
   ) {}
 
   async start() {
@@ -38,6 +40,7 @@ export class SessionCleanupService {
         }
 
         try {
+          await this.runtimeManager.teardownSession(sessionId);
           await this.storage.deleteSession(sessionId);
           await this.metadata.deleteSession(sessionId);
         } catch (error) {

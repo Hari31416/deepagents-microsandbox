@@ -5,6 +5,7 @@ import { PostgresMetadataStore } from "./metadata/postgres_store.js";
 import { MicrosandboxRuntime } from "./runtime/microsandbox_runtime.js";
 import { SessionCleanupService } from "./sessions/cleanup.js";
 import { SessionLockManager } from "./sessions/locks.js";
+import { SessionRuntimeManager } from "./sessions/runtime_manager.js";
 import { Client } from "minio";
 import { MinioSessionStorage } from "./storage/minio.js";
 import { WorkspaceSync } from "./storage/sync.js";
@@ -24,8 +25,10 @@ async function main() {
   const metadata = await PostgresMetadataStore.create(config.databaseUrl, config.sessionTtlSeconds);
   const locks = new SessionLockManager();
   const sync = new WorkspaceSync(storage);
-  const cleanup = new SessionCleanupService(config, storage, metadata, locks);
-  const executor = new JobExecutor(config, runtime, sync, metadata, locks);
+  const runtimeManager = new SessionRuntimeManager(config, runtime, sync, storage, metadata);
+  await runtimeManager.reconcileStartup();
+  const cleanup = new SessionCleanupService(config, storage, metadata, locks, runtimeManager);
+  const executor = new JobExecutor(config, runtime, metadata, locks, runtimeManager);
 
   const app = await buildApp({
     config,
@@ -34,6 +37,7 @@ async function main() {
     metadata,
     locks,
     cleanup,
+    runtimeManager,
     sync,
     executor
   });

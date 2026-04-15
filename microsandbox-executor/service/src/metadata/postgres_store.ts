@@ -1,7 +1,13 @@
 import { Pool } from "pg";
 
 import type { ExecutionRequest, JobRecord } from "../jobs/models.js";
-import type { MetadataHealth, MetadataStore, SessionFileRecord, SessionRecord } from "./types.js";
+import type {
+  MetadataHealth,
+  MetadataStore,
+  SessionFileRecord,
+  SessionRecord,
+  SessionRuntimeLeaseRecord
+} from "./types.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -131,23 +137,28 @@ export class PostgresMetadataStore implements MetadataStore {
     await this.pool.query(`DELETE FROM sessions WHERE session_id = $1`, [sessionId]);
   }
 
-  async upsertFile(sessionId: string, path: string, size: number, contentType: string | null) {
+  async upsertFile(sessionId: string, path: string, size: number, contentType: string | null, checksum: string | null = null) {
     const timestamp = nowIso();
     await this.pool.query(
       `INSERT INTO session_files (
-        session_id, path, size, content_type, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $5)
+        session_id, path, size, content_type, checksum, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $6)
       ON CONFLICT (session_id, path) DO UPDATE
       SET size = EXCLUDED.size,
           content_type = EXCLUDED.content_type,
+          checksum = EXCLUDED.checksum,
           updated_at = EXCLUDED.updated_at`,
-      [sessionId, path, size, contentType, timestamp]
+      [sessionId, path, size, contentType, checksum, timestamp]
     );
+  }
+
+  async deleteFile(sessionId: string, path: string) {
+    await this.pool.query(`DELETE FROM session_files WHERE session_id = $1 AND path = $2`, [sessionId, path]);
   }
 
   async listFiles(sessionId: string): Promise<SessionFileRecord[]> {
     const result = await this.pool.query(
-      `SELECT session_id, path, size, content_type, created_at, updated_at
+      `SELECT session_id, path, size, content_type, checksum, created_at, updated_at
        FROM session_files
        WHERE session_id = $1
        ORDER BY path ASC`,
@@ -158,12 +169,75 @@ export class PostgresMetadataStore implements MetadataStore {
 
   async getFile(sessionId: string, path: string) {
     const result = await this.pool.query(
-      `SELECT session_id, path, size, content_type, created_at, updated_at
+      `SELECT session_id, path, size, content_type, checksum, created_at, updated_at
        FROM session_files
        WHERE session_id = $1 AND path = $2`,
       [sessionId, path]
     );
     return result.rowCount ? mapSessionFile(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async getSessionRuntime(sessionId: string) {
+    const result = await this.pool.query(
+      `SELECT
+         session_id, sandbox_name, workspace_path, image, cpu_limit, memory_mb,
+         network_mode, allowed_hosts_key, hydrated, dirty, created_at, updated_at, last_used_at
+       FROM session_runtime_leases
+       WHERE session_id = $1`,
+      [sessionId]
+    );
+    return result.rowCount ? mapSessionRuntime(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async upsertSessionRuntime(runtime: SessionRuntimeLeaseRecord) {
+    await this.pool.query(
+      `INSERT INTO session_runtime_leases (
+         session_id, sandbox_name, workspace_path, image, cpu_limit, memory_mb,
+         network_mode, allowed_hosts_key, hydrated, dirty, created_at, updated_at, last_used_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (session_id) DO UPDATE
+       SET sandbox_name = EXCLUDED.sandbox_name,
+           workspace_path = EXCLUDED.workspace_path,
+           image = EXCLUDED.image,
+           cpu_limit = EXCLUDED.cpu_limit,
+           memory_mb = EXCLUDED.memory_mb,
+           network_mode = EXCLUDED.network_mode,
+           allowed_hosts_key = EXCLUDED.allowed_hosts_key,
+           hydrated = EXCLUDED.hydrated,
+           dirty = EXCLUDED.dirty,
+           updated_at = EXCLUDED.updated_at,
+           last_used_at = EXCLUDED.last_used_at`,
+      [
+        runtime.sessionId,
+        runtime.sandboxName,
+        runtime.workspacePath,
+        runtime.image,
+        runtime.cpuLimit,
+        runtime.memoryMb,
+        runtime.networkMode,
+        runtime.allowedHostsKey,
+        runtime.hydrated,
+        runtime.dirty,
+        runtime.createdAt,
+        runtime.updatedAt,
+        runtime.lastUsedAt
+      ]
+    );
+  }
+
+  async deleteSessionRuntime(sessionId: string) {
+    await this.pool.query(`DELETE FROM session_runtime_leases WHERE session_id = $1`, [sessionId]);
+  }
+
+  async listSessionRuntimes() {
+    const result = await this.pool.query(
+      `SELECT
+         session_id, sandbox_name, workspace_path, image, cpu_limit, memory_mb,
+         network_mode, allowed_hosts_key, hydrated, dirty, created_at, updated_at, last_used_at
+       FROM session_runtime_leases
+       ORDER BY session_id ASC`
+    );
+    return result.rows.map((row: Record<string, unknown>) => mapSessionRuntime(row));
   }
 
   async createJob(jobId: string, request: ExecutionRequest) {
@@ -290,9 +364,26 @@ export class PostgresMetadataStore implements MetadataStore {
         path TEXT NOT NULL,
         size BIGINT NOT NULL,
         content_type TEXT,
+        checksum TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (session_id, path)
+      );
+
+      CREATE TABLE IF NOT EXISTS session_runtime_leases (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        sandbox_name TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        image TEXT NOT NULL,
+        cpu_limit INTEGER NOT NULL,
+        memory_mb INTEGER NOT NULL,
+        network_mode TEXT NOT NULL,
+        allowed_hosts_key TEXT NOT NULL,
+        hydrated BOOLEAN NOT NULL DEFAULT false,
+        dirty BOOLEAN NOT NULL DEFAULT false,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS jobs (
@@ -310,6 +401,8 @@ export class PostgresMetadataStore implements MetadataStore {
         request_json TEXT NOT NULL
       );
     `);
+
+    await this.pool.query(`ALTER TABLE session_files ADD COLUMN IF NOT EXISTS checksum TEXT`);
 
     const restartedAt = nowIso();
     await this.pool.query(
@@ -344,8 +437,27 @@ function mapSessionFile(row: Record<string, unknown>): SessionFileRecord {
     path: String(row.path),
     size: Number(row.size),
     contentType: row.content_type === null ? null : String(row.content_type),
+    checksum: row.checksum === null ? null : String(row.checksum),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+function mapSessionRuntime(row: Record<string, unknown>): SessionRuntimeLeaseRecord {
+  return {
+    sessionId: String(row.session_id),
+    sandboxName: String(row.sandbox_name),
+    workspacePath: String(row.workspace_path),
+    image: String(row.image),
+    cpuLimit: Number(row.cpu_limit),
+    memoryMb: Number(row.memory_mb),
+    networkMode: String(row.network_mode) as SessionRuntimeLeaseRecord["networkMode"],
+    allowedHostsKey: String(row.allowed_hosts_key),
+    hydrated: Boolean(row.hydrated),
+    dirty: Boolean(row.dirty),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    lastUsedAt: String(row.last_used_at)
   };
 }
 

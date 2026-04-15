@@ -1,16 +1,25 @@
-export interface RuntimeJobInput {
+export interface SessionRuntimeSpec {
   sandboxName: string;
   image: string;
   workspaceHostPath: string;
   guestWorkspacePath: string;
+  cpuLimit: number;
+  memoryMb: number;
+  networkMode: "none" | "allowlist" | "public";
+  allowedHosts: string[];
+}
+
+export interface RuntimeLeaseHandle {
+  sandboxName: string;
+}
+
+export interface RuntimeExecInput {
+  sandboxName: string;
+  guestWorkspacePath: string;
   command: string;
   args: string[];
   timeoutMs: number;
-  cpuLimit: number;
-  memoryMb: number;
   environment: Record<string, string>;
-  networkMode: "none" | "allowlist" | "public";
-  allowedHosts: string[];
 }
 
 export interface RuntimeJobResult {
@@ -27,6 +36,10 @@ export interface RuntimeHealth {
 }
 
 export interface SandboxRuntime {
-  executeJob(input: RuntimeJobInput): Promise<RuntimeJobResult>;
+  ensureSandbox(input: SessionRuntimeSpec): Promise<RuntimeLeaseHandle>;
+  execInSandbox(input: RuntimeExecInput): Promise<RuntimeJobResult>;
+  destroySandbox(sandboxName: string): Promise<void>;
+  destroyAllSandboxes(): Promise<void>;
+  listSandboxes(): Promise<string[]>;
   healthCheck(): Promise<RuntimeHealth>;
 }

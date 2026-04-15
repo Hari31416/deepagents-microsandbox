@@ -16,14 +16,15 @@ export interface ManifestEntry {
 
 export type WorkspaceManifest = Map<string, ManifestEntry>;
 
-export async function captureManifest(root: string, ignoredRelativePrefixes: string[] = []) {
+export async function captureManifest(root: string, ignoredRelativePrefixes: string[] = [], options: { hashAllFiles?: boolean } = {}) {
   const manifest: WorkspaceManifest = new Map();
-  await walk(root, "", manifest, ignoredRelativePrefixes.map(normalizePrefix));
+  await walk(root, "", manifest, ignoredRelativePrefixes.map(normalizePrefix), options.hashAllFiles ?? false);
   return manifest;
 }
 
 export function diffManifests(before: WorkspaceManifest, after: WorkspaceManifest) {
   const changedFiles: string[] = [];
+  const deletedFiles: string[] = [];
 
   for (const [path, entry] of after.entries()) {
     if (entry.kind !== "file") {
@@ -37,16 +38,59 @@ export function diffManifests(before: WorkspaceManifest, after: WorkspaceManifes
     }
   }
 
-  changedFiles.sort();
+  for (const [path, entry] of before.entries()) {
+    if (entry.kind !== "file") {
+      continue;
+    }
 
-  return { changedFiles };
+    if (!after.has(path)) {
+      deletedFiles.push(path);
+    }
+  }
+
+  changedFiles.sort();
+  deletedFiles.sort();
+
+  return { changedFiles, deletedFiles };
+}
+
+export function diffMetadataFiles(
+  before: Array<{ path: string; size: number; checksum: string | null }>,
+  after: WorkspaceManifest
+) {
+  const changedFiles: string[] = [];
+  const deletedFiles: string[] = [];
+  const beforeByPath = new Map(before.map((entry) => [entry.path, entry]));
+
+  for (const [path, entry] of after.entries()) {
+    if (entry.kind !== "file") {
+      continue;
+    }
+
+    const previous = beforeByPath.get(path);
+    if (!previous || previous.size !== entry.size || previous.checksum !== entry.hash) {
+      changedFiles.push(path);
+    }
+  }
+
+  for (const entry of before) {
+    const current = after.get(entry.path);
+    if (!current || current.kind !== "file") {
+      deletedFiles.push(entry.path);
+    }
+  }
+
+  changedFiles.sort();
+  deletedFiles.sort();
+  return { changedFiles, deletedFiles };
 }
 
 async function walk(
   root: string,
   relativeDir: string,
   manifest: WorkspaceManifest,
-  ignoredRelativePrefixes: string[]
+  ignoredRelativePrefixes: string[],
+  hashAllFiles: boolean
 ) {
   const directoryPath = relativeDir ? resolveWithin(root, relativeDir) : root;
   const entries = await readdir(directoryPath, { withFileTypes: true });
@@ -68,11 +112,14 @@ async function walk(
       kind,
       size: stats.size,
       mtimeMs: stats.mtimeMs,
-      hash: kind === "file" && stats.size <= SMALL_FILE_HASH_LIMIT_BYTES ? await hashFile(root, normalizedPath) : undefined
+      hash:
+        kind === "file" && (hashAllFiles || stats.size <= SMALL_FILE_HASH_LIMIT_BYTES)
+          ? await hashFile(root, normalizedPath)
+          : undefined
     });
 
     if (entry.isDirectory()) {
-      await walk(root, normalizedPath, manifest, ignoredRelativePrefixes);
+      await walk(root, normalizedPath, manifest, ignoredRelativePrefixes, hashAllFiles);
     }
   }
 }

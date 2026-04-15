@@ -14,8 +14,25 @@ export interface SessionFileRecord {
   path: string;
   size: number;
   contentType: string | null;
+  checksum: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SessionRuntimeLeaseRecord {
+  sessionId: string;
+  sandboxName: string;
+  workspacePath: string;
+  image: string;
+  cpuLimit: number;
+  memoryMb: number;
+  networkMode: "none" | "allowlist" | "public";
+  allowedHostsKey: string;
+  hydrated: boolean;
+  dirty: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string;
 }
 
 export interface MetadataHealth {
@@ -35,9 +52,20 @@ export interface MetadataStore {
   markSessionDeleting(sessionId: string): Promise<boolean> | boolean;
   clearSessionDeleting(sessionId: string): Promise<void> | void;
   deleteSession(sessionId: string): Promise<void> | void;
-  upsertFile(sessionId: string, path: string, size: number, contentType: string | null): Promise<void> | void;
+  upsertFile(
+    sessionId: string,
+    path: string,
+    size: number,
+    contentType: string | null,
+    checksum?: string | null
+  ): Promise<void> | void;
+  deleteFile(sessionId: string, path: string): Promise<void> | void;
   listFiles(sessionId: string): Promise<SessionFileRecord[]> | SessionFileRecord[];
   getFile(sessionId: string, path: string): Promise<SessionFileRecord | null> | SessionFileRecord | null;
+  getSessionRuntime(sessionId: string): Promise<SessionRuntimeLeaseRecord | null> | SessionRuntimeLeaseRecord | null;
+  upsertSessionRuntime(runtime: SessionRuntimeLeaseRecord): Promise<void> | void;
+  deleteSessionRuntime(sessionId: string): Promise<void> | void;
+  listSessionRuntimes(): Promise<SessionRuntimeLeaseRecord[]> | SessionRuntimeLeaseRecord[];
   createJob(jobId: string, request: ExecutionRequest): Promise<JobRecord> | JobRecord;
   markJobRunning(jobId: string): Promise<JobRecord> | JobRecord;
   completeJob(

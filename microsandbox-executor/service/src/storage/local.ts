@@ -3,7 +3,7 @@ import { copyFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
-import { ensureDir, pathExists, removeDirIfExists, resolveWithin, statWithin } from "../util/fs.js";
+import { ensureDir, pathExists, removeDirIfExists, removeFileIfExists, resolveWithin, statWithin } from "../util/fs.js";
 import type { DownloadHandle, SessionStorage, StorageHealth } from "./types.js";
 
 const accessAsync = promisify(access);
@@ -36,6 +36,10 @@ export class LocalSessionStorage implements SessionStorage {
     const destinationPath = resolveWithin(this.resolveSessionRoot(sessionId), relativePath);
     await ensureDir(dirname(destinationPath));
     await writeFile(destinationPath, contents);
+  }
+
+  async deleteFile(sessionId: string, relativePath: string) {
+    await removeFileIfExists(resolveWithin(this.resolveSessionRoot(sessionId), relativePath));
   }
 
   async stageFiles(sessionId: string, filePaths: string[], workspacePath: string) {

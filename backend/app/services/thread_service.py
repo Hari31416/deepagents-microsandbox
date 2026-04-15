@@ -1,7 +1,9 @@
 from dataclasses import asdict, dataclass
 import logging
 
-from app.db.repositories import ThreadRepository
+import httpx
+
+from app.db.repositories import SandboxSessionRepository, ThreadRepository
 from app.security import ROLE_ADMIN, ROLE_SUPER_ADMIN
 from app.storage.minio import MinioStorage
 
@@ -18,10 +20,14 @@ class ThreadRecord:
 
 class ThreadService:
     def __init__(
-        self, repository: ThreadRepository, storage: MinioStorage | None = None
+        self,
+        repository: ThreadRepository,
+        storage: MinioStorage | None = None,
+        sandbox_session_repository: SandboxSessionRepository | None = None,
     ) -> None:
         self._repository = repository
         self._storage = storage
+        self._sandbox_session_repository = sandbox_session_repository
 
     def create_thread(
         self, owner_id: str, title: str | None = None
@@ -104,6 +110,7 @@ class ThreadService:
             is None
         ):
             return False
+        self._delete_executor_session(thread_id)
         if self._storage is not None:
             try:
                 self._storage.delete_prefix(f"{thread_id}/")
@@ -114,6 +121,20 @@ class ThreadService:
                     exc_info=True,
                 )
         return self._repository.delete_thread(thread_id=thread_id)
+
+    def _delete_executor_session(self, thread_id: str) -> None:
+        if self._sandbox_session_repository is None:
+            return
+
+        mapping = self._sandbox_session_repository.get(thread_id=thread_id)
+        if mapping is None:
+            return
+
+        with httpx.Client(base_url=mapping.executor_base_url, timeout=10.0) as client:
+            response = client.delete(f"/v1/sessions/{mapping.sandbox_session_id}")
+            if response.status_code in {204, 404}:
+                return
+            response.raise_for_status()
 
     @staticmethod
     def _to_record(record) -> ThreadRecord:

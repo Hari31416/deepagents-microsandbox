@@ -502,6 +502,13 @@ class SandboxSessionRepository:
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
 
+    def get(self, *, thread_id: str) -> SandboxSessionRecord | None:
+        with self._session_factory() as session:
+            record = session.get(ThreadSandboxSession, thread_id)
+            if record is None:
+                return None
+            return self._to_record(record)
+
     def get_or_create(
         self,
         *,

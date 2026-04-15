@@ -3,7 +3,13 @@ import Database from "better-sqlite3";
 
 import { ensureDir } from "../util/fs.js";
 import type { ExecutionRequest, JobRecord } from "../jobs/models.js";
-import type { MetadataHealth, MetadataStore, SessionFileRecord, SessionRecord } from "./types.js";
+import type {
+  MetadataHealth,
+  MetadataStore,
+  SessionFileRecord,
+  SessionRecord,
+  SessionRuntimeLeaseRecord
+} from "./types.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -134,25 +140,30 @@ export class SqliteMetadataStore implements MetadataStore {
     this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
   }
 
-  upsertFile(sessionId: string, path: string, size: number, contentType: string | null) {
+  upsertFile(sessionId: string, path: string, size: number, contentType: string | null, checksum: string | null = null) {
     const timestamp = nowIso();
     this.db
       .prepare(
         `INSERT INTO session_files (
-          session_id, path, size, content_type, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          session_id, path, size, content_type, checksum, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, path) DO UPDATE SET
           size = excluded.size,
           content_type = excluded.content_type,
+          checksum = excluded.checksum,
           updated_at = excluded.updated_at`
       )
-      .run(sessionId, path, size, contentType, timestamp, timestamp);
+      .run(sessionId, path, size, contentType, checksum, timestamp, timestamp);
+  }
+
+  deleteFile(sessionId: string, path: string) {
+    this.db.prepare(`DELETE FROM session_files WHERE session_id = ? AND path = ?`).run(sessionId, path);
   }
 
   listFiles(sessionId: string): SessionFileRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT session_id, path, size, content_type, created_at, updated_at
+        `SELECT session_id, path, size, content_type, checksum, created_at, updated_at
          FROM session_files WHERE session_id = ? ORDER BY path ASC`
       )
       .all(sessionId) as Array<Record<string, unknown>>;
@@ -162,12 +173,79 @@ export class SqliteMetadataStore implements MetadataStore {
   getFile(sessionId: string, path: string) {
     const row = this.db
       .prepare(
-        `SELECT session_id, path, size, content_type, created_at, updated_at
+        `SELECT session_id, path, size, content_type, checksum, created_at, updated_at
          FROM session_files
          WHERE session_id = ? AND path = ?`
       )
       .get(sessionId, path) as Record<string, unknown> | undefined;
     return row ? mapSessionFile(row) : null;
+  }
+
+  getSessionRuntime(sessionId: string) {
+    const row = this.db
+      .prepare(
+        `SELECT
+           session_id, sandbox_name, workspace_path, image, cpu_limit, memory_mb,
+           network_mode, allowed_hosts_key, hydrated, dirty, created_at, updated_at, last_used_at
+         FROM session_runtime_leases
+         WHERE session_id = ?`
+      )
+      .get(sessionId) as Record<string, unknown> | undefined;
+    return row ? mapSessionRuntime(row) : null;
+  }
+
+  upsertSessionRuntime(runtime: SessionRuntimeLeaseRecord) {
+    this.db
+      .prepare(
+        `INSERT INTO session_runtime_leases (
+          session_id, sandbox_name, workspace_path, image, cpu_limit, memory_mb,
+          network_mode, allowed_hosts_key, hydrated, dirty, created_at, updated_at, last_used_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          sandbox_name = excluded.sandbox_name,
+          workspace_path = excluded.workspace_path,
+          image = excluded.image,
+          cpu_limit = excluded.cpu_limit,
+          memory_mb = excluded.memory_mb,
+          network_mode = excluded.network_mode,
+          allowed_hosts_key = excluded.allowed_hosts_key,
+          hydrated = excluded.hydrated,
+          dirty = excluded.dirty,
+          updated_at = excluded.updated_at,
+          last_used_at = excluded.last_used_at`
+      )
+      .run(
+        runtime.sessionId,
+        runtime.sandboxName,
+        runtime.workspacePath,
+        runtime.image,
+        runtime.cpuLimit,
+        runtime.memoryMb,
+        runtime.networkMode,
+        runtime.allowedHostsKey,
+        runtime.hydrated ? 1 : 0,
+        runtime.dirty ? 1 : 0,
+        runtime.createdAt,
+        runtime.updatedAt,
+        runtime.lastUsedAt
+      );
+  }
+
+  deleteSessionRuntime(sessionId: string) {
+    this.db.prepare(`DELETE FROM session_runtime_leases WHERE session_id = ?`).run(sessionId);
+  }
+
+  listSessionRuntimes(): SessionRuntimeLeaseRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           session_id, sandbox_name, workspace_path, image, cpu_limit, memory_mb,
+           network_mode, allowed_hosts_key, hydrated, dirty, created_at, updated_at, last_used_at
+         FROM session_runtime_leases
+         ORDER BY session_id ASC`
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows.map(mapSessionRuntime);
   }
 
   createJob(jobId: string, request: ExecutionRequest) {
@@ -295,9 +373,27 @@ export class SqliteMetadataStore implements MetadataStore {
         path TEXT NOT NULL,
         size INTEGER NOT NULL,
         content_type TEXT,
+        checksum TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (session_id, path),
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS session_runtime_leases (
+        session_id TEXT PRIMARY KEY,
+        sandbox_name TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        image TEXT NOT NULL,
+        cpu_limit INTEGER NOT NULL,
+        memory_mb INTEGER NOT NULL,
+        network_mode TEXT NOT NULL,
+        allowed_hosts_key TEXT NOT NULL,
+        hydrated INTEGER NOT NULL DEFAULT 0,
+        dirty INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
         FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
       );
 
@@ -318,6 +414,8 @@ export class SqliteMetadataStore implements MetadataStore {
       );
     `);
 
+    this.ensureColumn("session_files", "checksum", "TEXT");
+
     const restartedAt = nowIso();
     this.db
       .prepare(
@@ -332,6 +430,13 @@ export class SqliteMetadataStore implements MetadataStore {
       )
       .run(restartedAt);
     this.db.exec("UPDATE sessions SET active_job_count = 0, deleting = 0");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 }
 
@@ -352,8 +457,27 @@ function mapSessionFile(row: Record<string, unknown>): SessionFileRecord {
     path: String(row.path),
     size: Number(row.size),
     contentType: row.content_type === null ? null : String(row.content_type),
+    checksum: row.checksum === null ? null : String(row.checksum),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+function mapSessionRuntime(row: Record<string, unknown>): SessionRuntimeLeaseRecord {
+  return {
+    sessionId: String(row.session_id),
+    sandboxName: String(row.sandbox_name),
+    workspacePath: String(row.workspace_path),
+    image: String(row.image),
+    cpuLimit: Number(row.cpu_limit),
+    memoryMb: Number(row.memory_mb),
+    networkMode: String(row.network_mode) as SessionRuntimeLeaseRecord["networkMode"],
+    allowedHostsKey: String(row.allowed_hosts_key),
+    hydrated: Number(row.hydrated) === 1,
+    dirty: Number(row.dirty) === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    lastUsedAt: String(row.last_used_at)
   };
 }
 

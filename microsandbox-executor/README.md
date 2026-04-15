@@ -30,9 +30,10 @@ graph TD
 
 ## Key Features
 
-- **MicroVM Isolation**: Every job runs in a fresh [Microsandbox](https://github.com/superradcompany/microsandbox) microVM for robust security and performance.
-- **Persistent Sessions**: Maintain state across multiple code executions within a single session.
-- **Bi-directional Sync**: Automatically stages session files into the sandbox and syncs back any new or modified artifacts after execution.
+- **MicroVM Isolation**: Each thread session gets a dedicated [Microsandbox](https://github.com/superradcompany/microsandbox) microVM that is created lazily and reused until the session is deleted or expires.
+- **Persistent Sessions**: Session workspaces live under the executor scratch root and stay warm across multiple code executions within the same thread.
+- **Bi-directional Sync**: Uploads are mirrored into any live workspace immediately, and each execution flushes changed and deleted files back to durable storage.
+- **Restart Reconciliation**: Runtime lease metadata survives executor restarts so stale sandboxes can be reaped and dirty workspaces can be flushed deterministically.
 - **Multi-Runtime Support**: Pre-configured profiles for standard Python and optimized Data Science (NumPy, Pandas, Scikit-learn) environments.
 - **Developer Portal**: A premium, IDE-like web interface with a built-in terminal, Monaco Editor, and file explorer.
 - **Python Client**: A lightweight client library for programmatic integration with agentic workflows.
@@ -64,7 +65,7 @@ graph TD
 
 ## Critical Execution Flow
 
-The sequence below illustrates the lifecycle of a single execution job, from session preparation to artifact retrieval.
+The sequence below illustrates the lifecycle of a session-backed execution, from lazy sandbox creation to teardown.
 
 ```mermaid
 sequenceDiagram
@@ -81,15 +82,16 @@ sequenceDiagram
     S->>FS: Persist uploaded files
 
     U->>S: POST /v1/execute (code, profile)
-    S->>FS: Create temporary workspace
-    S->>FS: Copy session files to workspace
-    S->>VM: Start microVM with workspace mount
+    S->>FS: Create or reconcile session workspace
+    S->>VM: Create or reuse session microVM
     VM->>VM: Execute user code
     VM-->>S: Execution summary (stdout/stderr)
-    S->>FS: Diff workspace & sync changes back to session
-    S->>FS: Cleanup temporary workspace
-    S->>VM: Terminate VM
+    S->>FS: Diff workspace & sync changes back to durable storage
     S-->>U: Final Job Result
+
+    U->>S: DELETE /v1/sessions/sess_123
+    S->>VM: Terminate session microVM
+    S->>FS: Remove session workspace and persisted files
 ```
 
 ## Installation & Setup

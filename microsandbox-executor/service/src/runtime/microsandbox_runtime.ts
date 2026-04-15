@@ -1,12 +1,37 @@
 import { Mount, Sandbox, isInstalled } from "microsandbox";
 
 import { buildNetworkConfig } from "../policy/network.js";
-import type { SandboxRuntime, RuntimeHealth, RuntimeJobInput, RuntimeJobResult } from "./types.js";
+import type {
+  RuntimeExecInput,
+  RuntimeHealth,
+  RuntimeJobResult,
+  RuntimeLeaseHandle,
+  SandboxRuntime,
+  SessionRuntimeSpec
+} from "./types.js";
 
 export class MicrosandboxRuntime implements SandboxRuntime {
-  async executeJob(input: RuntimeJobInput): Promise<RuntimeJobResult> {
+  private readonly sandboxes = new Map<string, Sandbox>();
+
+  async ensureSandbox(input: SessionRuntimeSpec): Promise<RuntimeLeaseHandle> {
     if (!isInstalled()) {
       throw new Error("microsandbox runtime is not installed. Install it before executing jobs.");
+    }
+
+    const cachedSandbox = this.sandboxes.get(input.sandboxName);
+    if (cachedSandbox) {
+      return { sandboxName: input.sandboxName };
+    }
+
+    const existing = (await Sandbox.list()).find((sandbox) => sandbox.name === input.sandboxName);
+    if (existing?.status === "running") {
+      const sandbox = await (await Sandbox.get(input.sandboxName)).connect();
+      this.sandboxes.set(input.sandboxName, sandbox);
+      return { sandboxName: input.sandboxName };
+    }
+
+    if (existing) {
+      await this.destroySandbox(input.sandboxName);
     }
 
     console.info("[microsandbox] creating sandbox", {
@@ -28,8 +53,7 @@ export class MicrosandboxRuntime implements SandboxRuntime {
       workdir: input.guestWorkspacePath,
       replace: true,
       env: {
-        PYTHONUNBUFFERED: "1",
-        ...input.environment
+        PYTHONUNBUFFERED: "1"
       },
       volumes: {
         [input.guestWorkspacePath]: Mount.bind(input.workspaceHostPath)
@@ -42,6 +66,16 @@ export class MicrosandboxRuntime implements SandboxRuntime {
       image: input.image,
       createDurationMs: Date.now() - createStartedAt
     });
+
+    this.sandboxes.set(input.sandboxName, sandbox);
+    return { sandboxName: input.sandboxName };
+  }
+
+  async execInSandbox(input: RuntimeExecInput): Promise<RuntimeJobResult> {
+    const sandbox = this.sandboxes.get(input.sandboxName);
+    if (!sandbox) {
+      throw new Error(`Sandbox not ready: ${input.sandboxName}`);
+    }
 
     const startedAt = Date.now();
 
@@ -81,13 +115,55 @@ export class MicrosandboxRuntime implements SandboxRuntime {
         error: error instanceof Error ? error.message : "Unknown error"
       });
       throw error;
-    } finally {
-      console.info("[microsandbox] cleaning sandbox", {
-        timestamp: new Date().toISOString(),
-        sandboxName: input.sandboxName
-      });
-      await this.cleanupSandbox(sandbox, input.sandboxName);
     }
+  }
+
+  async destroySandbox(sandboxName: string) {
+    const sandbox = this.sandboxes.get(sandboxName);
+    if (sandbox) {
+      await this.cleanupSandbox(sandbox, sandboxName);
+      this.sandboxes.delete(sandboxName);
+      return;
+    }
+
+    try {
+      const existing = (await Sandbox.list()).find((entry) => entry.name === sandboxName);
+      if (!existing) {
+        return;
+      }
+
+      const handle = await Sandbox.get(sandboxName);
+      try {
+        await handle.stop();
+      } catch {
+        try {
+          await handle.kill();
+        } catch {
+          // Ignore runtime cleanup failures while reaping stale sandboxes.
+        }
+      }
+      await handle.remove();
+    } catch {
+      try {
+        await Sandbox.remove(sandboxName);
+      } catch {
+        // Ignore missing records.
+      }
+    }
+  }
+
+  async destroyAllSandboxes() {
+    for (const sandboxName of await this.listSandboxes()) {
+      await this.destroySandbox(sandboxName);
+    }
+  }
+
+  async listSandboxes() {
+    if (!isInstalled()) {
+      return [];
+    }
+
+    return (await Sandbox.list()).map((sandbox) => sandbox.name);
   }
 
   async healthCheck(): Promise<RuntimeHealth> {

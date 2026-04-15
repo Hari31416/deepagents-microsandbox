@@ -30,14 +30,32 @@ test("MetadataStore upserts files and tracks jobs", async () => {
   const store = await SqliteMetadataStore.create(join(root, "metadata.sqlite"), 60);
 
   store.createSession("sess_files");
-  store.upsertFile("sess_files", "input.csv", 123, "text/csv");
-  store.upsertFile("sess_files", "output.csv", 321, "text/csv");
+  store.upsertFile("sess_files", "input.csv", 123, "text/csv", "hash-input");
+  store.upsertFile("sess_files", "output.csv", 321, "text/csv", "hash-output");
 
   const files = store.listFiles("sess_files");
   assert.deepEqual(
     files.map((file) => file.path),
     ["input.csv", "output.csv"]
   );
+  assert.equal(files[0]?.checksum, "hash-input");
+
+  store.upsertSessionRuntime({
+    sessionId: "sess_files",
+    sandboxName: "sess-123",
+    workspacePath: "/tmp/workspace",
+    image: "runtime:latest",
+    cpuLimit: 1,
+    memoryMb: 512,
+    networkMode: "none",
+    allowedHostsKey: "",
+    hydrated: true,
+    dirty: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    lastUsedAt: "2026-01-01T00:00:00.000Z"
+  });
+  assert.equal(store.getSessionRuntime("sess_files")?.sandboxName, "sess-123");
 
   store.createJob("job_1", {
     sessionId: "sess_files",
@@ -63,5 +81,10 @@ test("MetadataStore upserts files and tracks jobs", async () => {
   const job = store.getRequiredJob("job_1");
   assert.equal(job.status, "completed");
   assert.deepEqual(job.filesUploaded, ["output.csv"]);
+  store.deleteFile("sess_files", "input.csv");
+  assert.deepEqual(
+    store.listFiles("sess_files").map((file) => file.path),
+    ["output.csv"]
+  );
   store.close();
 });

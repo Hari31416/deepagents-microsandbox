@@ -1,7 +1,9 @@
+import { dirname } from "node:path";
+import { writeFile } from "node:fs/promises";
 import { symlink } from "node:fs/promises";
 import { posix } from "node:path";
 
-import { normalizeRelativePath, pathExists, resolveWithin } from "../util/fs.js";
+import { ensureDir, normalizeRelativePath, pathExists, removeFileIfExists, resolveWithin } from "../util/fs.js";
 import type { SessionStorage } from "./types.js";
 
 export class WorkspaceSync {
@@ -16,6 +18,16 @@ export class WorkspaceSync {
   async persistFiles(workspacePath: string, sessionId: string, relativePaths: string[]) {
     const persistedFiles = [...new Set(relativePaths.map((relativePath) => normalizeRelativePath(relativePath)))].sort();
     return this.storage.persistFiles(sessionId, workspacePath, persistedFiles);
+  }
+
+  async writeWorkspaceFile(workspacePath: string, relativePath: string, contents: Buffer) {
+    const destinationPath = resolveWithin(workspacePath, relativePath);
+    await ensureDir(dirname(destinationPath));
+    await writeFile(destinationPath, contents);
+  }
+
+  async deleteWorkspaceFile(workspacePath: string, relativePath: string) {
+    await removeFileIfExists(resolveWithin(workspacePath, relativePath));
   }
 }
 

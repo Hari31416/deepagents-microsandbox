@@ -9,6 +9,7 @@ import type { SandboxRuntime } from "./runtime/types.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { SessionCleanupService } from "./sessions/cleanup.js";
 import { SessionLockManager } from "./sessions/locks.js";
+import { SessionRuntimeManager } from "./sessions/runtime_manager.js";
 import { WorkspaceSync } from "./storage/sync.js";
 import type { SessionStorage } from "./storage/types.js";
 import { registerExecuteRoutes } from "./routes/execute.js";
@@ -23,6 +24,7 @@ export interface AppServices {
   metadata: MetadataStore;
   locks: SessionLockManager;
   cleanup: SessionCleanupService;
+  runtimeManager: SessionRuntimeManager;
   sync: WorkspaceSync;
   executor: JobExecutor;
 }
@@ -61,6 +63,7 @@ export async function buildApp(services: AppServices) {
   await registerJobRoutes(app, services);
   app.addHook("onClose", async () => {
     services.cleanup.stop();
+    await services.runtimeManager.shutdown();
     await services.metadata.close();
   });
   await app.ready();

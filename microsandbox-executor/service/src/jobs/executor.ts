@@ -1,23 +1,20 @@
 import type { AppConfig } from "../config.js";
-import { stat } from "node:fs/promises";
+import type { MetadataStore } from "../metadata/types.js";
 import { prepareBashExecution, preparePythonExecution } from "../policy/restricted_exec.js";
 import type { SandboxRuntime } from "../runtime/types.js";
-import { createJobWorkspace, cleanupJobWorkspace } from "../storage/workspace.js";
-import type { MetadataStore } from "../metadata/types.js";
 import { SessionLockManager } from "../sessions/locks.js";
-import { createSandboxName, createJobId } from "../util/ids.js";
-import { resolveWithin } from "../util/fs.js";
-import { captureManifest, diffManifests } from "./manifests.js";
+import { SessionRuntimeManager } from "../sessions/runtime_manager.js";
+import { createJobId } from "../util/ids.js";
+import { captureManifest } from "./manifests.js";
 import type { ExecuteBashRequest, ExecuteRequest, ExecutionRequest, JobRecord } from "./models.js";
-import { WorkspaceSync } from "../storage/sync.js";
 
 export class JobExecutor {
   constructor(
     private readonly config: AppConfig,
     private readonly runtime: SandboxRuntime,
-    private readonly sync: WorkspaceSync,
     private readonly metadata: MetadataStore,
-    private readonly locks: SessionLockManager
+    private readonly locks: SessionLockManager,
+    private readonly runtimeManager: SessionRuntimeManager
   ) {}
 
   async execute(request: ExecuteRequest) {
@@ -107,26 +104,41 @@ export class JobExecutor {
       });
       await this.metadata.markJobRunning(jobId);
       await this.metadata.incrementActiveJobCount(request.sessionId);
-      const workspace = await createJobWorkspace(this.config.scratchRoot, request.sessionId, jobId);
+
+      const lease = await this.runtimeManager.ensureLease({
+        sessionId: request.sessionId,
+        image: runtimeImage,
+        cpuLimit: request.cpuLimit ?? this.config.defaultCpuLimit,
+        memoryMb: request.memoryMb ?? this.config.defaultMemoryMb,
+        networkMode: request.networkMode,
+        allowedHosts: request.allowedHosts
+      });
+      const beforeManifest = await captureManifest(lease.workspacePath, [], { hashAllFiles: true });
+
+      let preparedExecution:
+        | {
+            command: string;
+            args: string[];
+            ignoredRelativePrefixes: string[];
+          }
+        | undefined;
+      let runtimeResult:
+        | {
+            exitCode: number;
+            stdout: string;
+            stderr: string;
+            durationMs: number;
+          }
+        | undefined;
 
       try {
-        const stagedPaths = request.filePaths ?? (await this.metadata.listFiles(request.sessionId)).map((file) => file.path);
-        console.info("[executor] staging workspace files", {
-          timestamp: new Date().toISOString(),
-          jobId,
-          workspacePath: workspace.workspacePath,
-          fileCount: stagedPaths.length,
-          filePaths: stagedPaths.slice(0, 20)
-        });
-        await this.sync.stageFiles(request.sessionId, stagedPaths, workspace.workspacePath);
-        const beforeManifest = await captureManifest(workspace.workspacePath);
-
-        const preparedExecution = await prepareExecution(workspace.workspacePath);
+        await this.runtimeManager.markLeaseDirty(request.sessionId, true);
+        preparedExecution = await prepareExecution(lease.workspacePath);
 
         console.info("[executor] launching runtime", {
           timestamp: new Date().toISOString(),
           jobId,
-          sandboxName: createSandboxName(jobId),
+          sandboxName: lease.sandboxName,
           image: runtimeImage,
           timeoutSeconds: request.timeoutSeconds ?? this.config.defaultTimeoutSeconds,
           cpuLimit: request.cpuLimit ?? this.config.defaultCpuLimit,
@@ -135,29 +147,21 @@ export class JobExecutor {
           args: preparedExecution.args,
           payloadPreview: summarizeExecutionPayload(request)
         });
-        const runtimeResult = await this.runtime.executeJob({
-          sandboxName: createSandboxName(jobId),
-          image: runtimeImage,
-          workspaceHostPath: workspace.workspacePath,
+        runtimeResult = await this.runtime.execInSandbox({
+          sandboxName: lease.sandboxName,
           guestWorkspacePath: this.config.guestWorkspacePath,
           command: preparedExecution.command,
           args: preparedExecution.args,
           timeoutMs: (request.timeoutSeconds ?? this.config.defaultTimeoutSeconds) * 1000,
-          cpuLimit: request.cpuLimit ?? this.config.defaultCpuLimit,
-          memoryMb: request.memoryMb ?? this.config.defaultMemoryMb,
-          environment: request.environment,
-          networkMode: request.networkMode,
-          allowedHosts: request.allowedHosts
+          environment: request.environment
         });
 
-        const afterManifest = await captureManifest(workspace.workspacePath, preparedExecution.ignoredRelativePrefixes);
-        const diff = diffManifests(beforeManifest, afterManifest);
-        const uploadedFiles = await this.sync.persistFiles(workspace.workspacePath, request.sessionId, diff.changedFiles);
-
-        for (const relativePath of uploadedFiles) {
-          const persistedFile = await stat(resolveWithin(workspace.workspacePath, relativePath));
-          await this.metadata.upsertFile(request.sessionId, relativePath, persistedFile.size, null);
-        }
+        const persisted = await this.runtimeManager.persistWorkspaceChanges(
+          request.sessionId,
+          lease.workspacePath,
+          beforeManifest,
+          preparedExecution.ignoredRelativePrefixes
+        );
         await this.metadata.touchSession(request.sessionId);
 
         console.info("[executor] completed job", {
@@ -165,8 +169,9 @@ export class JobExecutor {
           jobId,
           exitCode: runtimeResult.exitCode,
           durationMs: runtimeResult.durationMs,
-          uploadedFileCount: uploadedFiles.length,
-          uploadedFiles: uploadedFiles.slice(0, 20),
+          uploadedFileCount: persisted.uploadedFiles.length,
+          uploadedFiles: persisted.uploadedFiles.slice(0, 20),
+          deletedFileCount: persisted.deletedFiles.length,
           stdoutPreview: summarizeOutput(runtimeResult.stdout),
           stderrPreview: summarizeOutput(runtimeResult.stderr)
         });
@@ -176,24 +181,42 @@ export class JobExecutor {
           stdout: runtimeResult.stdout,
           stderr: runtimeResult.stderr,
           durationMs: runtimeResult.durationMs,
-          filesUploaded: uploadedFiles
+          filesUploaded: persisted.uploadedFiles
         });
       } catch (error) {
+        let filesUploaded: string[] = [];
+
+        try {
+          const persisted = await this.runtimeManager.persistWorkspaceChanges(
+            request.sessionId,
+            lease.workspacePath,
+            beforeManifest,
+            preparedExecution?.ignoredRelativePrefixes ?? []
+          );
+          filesUploaded = persisted.uploadedFiles;
+        } catch (persistError) {
+          error = new Error(
+            `Execution failed and workspace flush also failed: ${formatError(error)}; flush error: ${formatError(
+              persistError
+            )}`
+          );
+        }
+
         console.error("[executor] job failed", {
           timestamp: new Date().toISOString(),
           jobId,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: formatError(error),
           payloadPreview: summarizeExecutionPayload(request)
         });
-        return this.metadata.failJob(jobId, error);
+        return this.metadata.failJob(jobId, error, {
+          exitCode: runtimeResult?.exitCode ?? null,
+          stdout: runtimeResult?.stdout ?? "",
+          stderr: runtimeResult?.stderr ?? formatError(error),
+          durationMs: runtimeResult?.durationMs ?? null,
+          filesUploaded
+        });
       } finally {
         await this.metadata.decrementActiveJobCount(request.sessionId);
-        console.info("[executor] cleaning workspace", {
-          timestamp: new Date().toISOString(),
-          jobId,
-          jobRoot: workspace.jobRoot
-        });
-        await cleanupJobWorkspace(workspace.jobRoot);
       }
     });
   }
@@ -230,4 +253,8 @@ function summarizeText(value: string, maxLength = 320) {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function formatError(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error";
 }

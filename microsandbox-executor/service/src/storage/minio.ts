@@ -37,6 +37,10 @@ export class MinioSessionStorage implements SessionStorage {
     });
   }
 
+  async deleteFile(sessionId: string, relativePath: string) {
+    await this.client.removeObject(this.bucketName, this.objectKey(sessionId, relativePath));
+  }
+
   async stageFiles(sessionId: string, filePaths: string[], workspacePath: string) {
     const staged: string[] = [];
 
