@@ -25,7 +25,7 @@ Responsible for the lifecycle of conversations and enforcing role-based visibili
 ### `FileService`
 - **Responsibility**: File lifecycle management, presigned URL generation, and artifact handling.
 - **Key Methods**: `get_presigned_upload`, `complete_upload`, `get_presigned_download`, `get_thread_files`.
-- **Security Model**: Upload completion is bound to a server-issued upload intent, and download presigning resolves files strictly from DB-backed `file_id` records.
+- **Security Model**: Standard frontend uploads terminate at the backend, which streams them into MinIO and returns a DB-backed file record. Download access resolves files strictly from DB-backed `file_id` records.
 
 ### `RunService`
 - **Responsibility**: Management of `ThreadRun` and `ThreadRunEvent` records.

@@ -351,7 +351,9 @@ class ThreadRepository:
         with self._session_factory() as session:
             return session.get(Thread, thread_id)
 
-    def get_admin_visible_thread(self, *, admin_id: str, thread_id: str) -> Thread | None:
+    def get_admin_visible_thread(
+        self, *, admin_id: str, thread_id: str
+    ) -> Thread | None:
         with self._session_factory() as session:
             statement = (
                 select(Thread)

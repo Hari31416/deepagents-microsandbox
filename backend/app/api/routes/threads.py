@@ -23,7 +23,9 @@ async def create_thread(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    return services.thread_service.create_thread(owner_id=user.user_id, title=payload.title)
+    return services.thread_service.create_thread(
+        owner_id=user.user_id, title=payload.title
+    )
 
 
 @router.get("")
@@ -31,7 +33,11 @@ async def list_threads(
     user: Annotated[UserContext, Depends(get_current_user)],
 ):
     services = get_services()
-    return {"threads": services.thread_service.list_threads(actor_user_id=user.user_id, actor_role=user.role)}
+    return {
+        "threads": services.thread_service.list_threads(
+            actor_user_id=user.user_id, actor_role=user.role
+        )
+    }
 
 
 @router.get("/{thread_id}")
@@ -46,7 +52,9 @@ async def get_thread(
         thread_id=thread_id,
     )
     if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
     return thread
 
 
@@ -64,7 +72,9 @@ async def update_thread(
         title=payload.title,
     )
     if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
     return thread
 
 
@@ -80,7 +90,9 @@ async def delete_thread(
         thread_id=thread_id,
     )
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
 
 
 @router.get("/{thread_id}/files")
@@ -98,7 +110,9 @@ async def list_thread_files(
             )
         }
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
 
 @router.get("/{thread_id}/messages")
@@ -113,7 +127,9 @@ async def list_thread_messages(
         thread_id=thread_id,
     )
     if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
     owner_id = str(thread["owner_id"])
     return {
         "messages": services.message_service.list_messages(
@@ -136,7 +152,9 @@ async def list_thread_events(
         thread_id=thread_id,
     )
     if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
     owner_id = str(thread["owner_id"])
     return {
         "events": services.run_event_service.list_events(
@@ -159,9 +177,15 @@ async def list_thread_runs(
         thread_id=thread_id,
     )
     if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
     owner_id = str(thread["owner_id"])
-    return {"runs": services.run_service.list_runs(owner_id=owner_id if user.is_admin else user.user_id, thread_id=thread_id)}
+    return {
+        "runs": services.run_service.list_runs(
+            owner_id=owner_id if user.is_admin else user.user_id, thread_id=thread_id
+        )
+    }
 
 
 @router.get("/{thread_id}/runs/{run_id}")
@@ -177,7 +201,9 @@ async def get_thread_run(
         thread_id=thread_id,
     )
     if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found"
+        )
     owner_id = str(thread["owner_id"])
     run = services.run_service.get_run(
         owner_id=owner_id if user.is_admin else user.user_id,
@@ -185,5 +211,7 @@ async def get_thread_run(
         run_id=run_id,
     )
     if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Run not found"
+        )
     return run

@@ -8,9 +8,16 @@ import httpx
 from app.db.repositories import SandboxSessionRepository
 
 try:
-    from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse
+    from deepagents.backends.protocol import (
+        ExecuteResponse,
+        FileDownloadResponse,
+        FileUploadResponse,
+    )
     from deepagents.backends.sandbox import BaseSandbox
-except ImportError:  # pragma: no cover - exercised only when deepagents is not installed
+except (
+    ImportError
+):  # pragma: no cover - exercised only when deepagents is not installed
+
     @dataclass
     class ExecuteResponse:
         output: str
@@ -129,7 +136,9 @@ class MicrosandboxBackend(BaseSandbox):
                 ("files", (relative_path, content, "application/octet-stream"))
             )
 
-        response = self._client.post(f"/v1/sessions/{self._session_id}/files", files=multipart_files)
+        response = self._client.post(
+            f"/v1/sessions/{self._session_id}/files", files=multipart_files
+        )
         if response.is_success:
             return [FileUploadResponse(path=path) for path, _ in files]
 
@@ -142,14 +151,22 @@ class MicrosandboxBackend(BaseSandbox):
 
         for path in paths:
             relative_path = normalize_workspace_path(path)
-            response = self._client.get(f"/v1/sessions/{self._session_id}/files/{relative_path}")
+            response = self._client.get(
+                f"/v1/sessions/{self._session_id}/files/{relative_path}"
+            )
 
             if response.is_success:
-                downloads.append(FileDownloadResponse(path=path, content=response.content))
+                downloads.append(
+                    FileDownloadResponse(path=path, content=response.content)
+                )
                 continue
 
             downloads.append(
-                FileDownloadResponse(path=path, content=None, error=self._normalize_download_error(response))
+                FileDownloadResponse(
+                    path=path,
+                    content=None,
+                    error=self._normalize_download_error(response),
+                )
             )
 
         return downloads
@@ -163,7 +180,9 @@ class MicrosandboxBackend(BaseSandbox):
         return [file for file in files if isinstance(file, dict)]
 
     def _ensure_session(self) -> None:
-        response = self._client.post("/v1/sessions", json={"session_id": self._session_id})
+        response = self._client.post(
+            "/v1/sessions", json={"session_id": self._session_id}
+        )
         if response.status_code not in {201, 409}:
             response.raise_for_status()
 
@@ -181,7 +200,11 @@ class MicrosandboxBackend(BaseSandbox):
             payload = response.json()
         except ValueError:
             return response.text or f"HTTP {response.status_code}"
-        return str(payload.get("error") or payload.get("detail") or f"HTTP {response.status_code}")
+        return str(
+            payload.get("error")
+            or payload.get("detail")
+            or f"HTTP {response.status_code}"
+        )
 
     @staticmethod
     def _build_headers(user_id: str | None) -> dict[str, str]:

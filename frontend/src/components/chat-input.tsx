@@ -52,23 +52,10 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     setIsUploading(true)
     try {
       for (const file of files) {
-        const presign = await filesApi.presignUpload({
+        await filesApi.upload({
           thread_id: activeThreadId,
-          filename: file.name,
-          content_type: file.type || "application/octet-stream",
-          size: file.size,
-          purpose: "upload"
-        })
-
-        await fetch(presign.url, {
-          method: "PUT",
-          body: file,
-          headers: presign.required_headers
-        })
-
-        await filesApi.completeUpload({
-          thread_id: activeThreadId,
-          file_id: presign.file_id,
+          file,
+          purpose: "upload",
         })
       }
 

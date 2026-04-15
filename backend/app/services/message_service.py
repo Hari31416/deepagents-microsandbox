@@ -64,8 +64,15 @@ class MessageService:
             )
         )
 
-    def list_messages(self, *, owner_id: str, thread_id: str) -> list[dict[str, object]]:
-        return [asdict(self._to_record(record)) for record in self._repository.list_messages(owner_id=owner_id, thread_id=thread_id)]
+    def list_messages(
+        self, *, owner_id: str, thread_id: str
+    ) -> list[dict[str, object]]:
+        return [
+            asdict(self._to_record(record))
+            for record in self._repository.list_messages(
+                owner_id=owner_id, thread_id=thread_id
+            )
+        ]
 
     def get_message(
         self,

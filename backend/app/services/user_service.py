@@ -126,14 +126,20 @@ class UserService:
         )
         sessions_revoked = 0
         if self._has_sensitive_session_change(target=target, role=role, status=status):
-            sessions_revoked = self._refresh_token_repository.revoke_all_tokens_for_user(user_id)
+            sessions_revoked = (
+                self._refresh_token_repository.revoke_all_tokens_for_user(user_id)
+            )
         self._audit_service.log(
             action="user_updated",
             actor_id=actor_id,
             actor_role=actor_role,
             target_type="user",
             target_id=user_id,
-            payload={"role": role, "status": status, "sessions_revoked": sessions_revoked},
+            payload={
+                "role": role,
+                "status": status,
+                "sessions_revoked": sessions_revoked,
+            },
         )
         return asdict(self._to_summary(record))
 
@@ -153,7 +159,9 @@ class UserService:
             user_id=user_id,
             password_hash=password_hash,
         )
-        sessions_revoked = self._refresh_token_repository.revoke_all_tokens_for_user(user_id)
+        sessions_revoked = self._refresh_token_repository.revoke_all_tokens_for_user(
+            user_id
+        )
         self._audit_service.log(
             action="password_reset",
             actor_id=actor_id,

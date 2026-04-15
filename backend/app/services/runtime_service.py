@@ -41,7 +41,9 @@ class RuntimeService:
             await self._ensure_checkpointer_setup(checkpointer)
             yield self._graph_factory(checkpointer=checkpointer)
 
-    async def _ensure_checkpointer_setup(self, checkpointer: "AsyncPostgresSaver") -> None:
+    async def _ensure_checkpointer_setup(
+        self, checkpointer: "AsyncPostgresSaver"
+    ) -> None:
         if self._checkpoint_setup_complete:
             return
         async with self._checkpoint_setup_lock:

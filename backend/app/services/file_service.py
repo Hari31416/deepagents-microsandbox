@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from mimetypes import guess_type
 from posixpath import basename
 from threading import Lock
-from typing import Any
+from typing import Any, BinaryIO
 
 from app.db.repositories import FileRepository
 from app.storage.minio import MinioStorage
@@ -103,6 +103,63 @@ class FileService:
             "size": size,
         }
 
+    def upload_file_stream(
+        self,
+        *,
+        actor_user_id: str,
+        actor_role: str,
+        thread_id: str,
+        filename: str,
+        content_type: str,
+        content_length: int,
+        content_stream: BinaryIO,
+        purpose: str = "upload",
+    ) -> dict[str, Any]:
+        if not self._storage:
+            raise ValueError("Storage not configured")
+
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
+            )
+            if not thread:
+                raise ValueError("Thread not found")
+
+        normalized_filename = basename(filename.strip())
+        if not normalized_filename:
+            raise ValueError("Filename may not be empty")
+        if content_length <= 0:
+            raise ValueError("Uploaded file may not be empty")
+
+        file_id = self._storage.allocate_file_id()
+        object_key = f"{thread_id}/{file_id}/{normalized_filename}"
+        content_stream.seek(0)
+        self._storage.put_object_stream(
+            object_key,
+            content_stream,
+            length=content_length,
+            content_type=content_type,
+        )
+        object_metadata = self._storage.stat_object(object_key)
+        self._assert_valid_thread_object_key(
+            thread_id=thread_id,
+            object_key=object_metadata.object_key,
+            expected_file_id=file_id,
+        )
+        record = self._repository.create_file(
+            file_id=file_id,
+            thread_id=thread_id,
+            object_key=object_key,
+            filename=normalized_filename,
+            kind=purpose,
+            content_type=object_metadata.content_type or content_type,
+            size=object_metadata.size,
+            status="completed",
+        )
+        return asdict(self._to_record(record))
+
     def complete_upload(
         self,
         actor_user_id: str,
@@ -170,23 +227,11 @@ class FileService:
     ) -> dict[str, Any]:
         if not self._storage:
             raise ValueError("Storage not configured")
-
-        if self._thread_service:
-            thread = self._thread_service.get_thread_for_actor(
-                actor_user_id=actor_user_id,
-                actor_role=actor_role,
-                thread_id=thread_id,
-            )
-            if not thread:
-                raise ValueError("Thread not found")
-
-        record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
-        if not record:
-            raise ValueError("File not found")
-        self._assert_valid_thread_object_key(
+        record = self._get_authorized_file(
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
             thread_id=thread_id,
-            object_key=record.object_key,
-            expected_file_id=file_id,
+            file_id=file_id,
         )
 
         ticket = self._storage.create_presigned_download(record.object_key)
@@ -198,7 +243,9 @@ class FileService:
             "expires_at": ticket.expires_at,
         }
 
-    def list_files(self, actor_user_id: str, actor_role: str, thread_id: str) -> list[dict]:
+    def list_files(
+        self, actor_user_id: str, actor_role: str, thread_id: str
+    ) -> list[dict]:
         if self._thread_service:
             thread = self._thread_service.get_thread_for_actor(
                 actor_user_id=actor_user_id,
@@ -228,6 +275,46 @@ class FileService:
         content = self._storage.get_object(record.object_key)
         return record.filename, content
 
+    def get_file_content_for_actor(
+        self,
+        *,
+        actor_user_id: str,
+        actor_role: str,
+        thread_id: str,
+        file_id: str,
+    ) -> tuple[str, str, bytes]:
+        if not self._storage:
+            raise ValueError("Storage not configured")
+
+        record = self._get_authorized_file(
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            thread_id=thread_id,
+            file_id=file_id,
+        )
+        content = self._storage.get_object(record.object_key)
+        return (
+            record.filename,
+            record.content_type or "application/octet-stream",
+            content,
+        )
+
+    def get_file_for_actor(
+        self,
+        *,
+        actor_user_id: str,
+        actor_role: str,
+        thread_id: str,
+        file_id: str,
+    ) -> dict[str, Any]:
+        record = self._get_authorized_file(
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            thread_id=thread_id,
+            file_id=file_id,
+        )
+        return asdict(self._to_record(record))
+
     def import_artifact(
         self,
         *,
@@ -254,11 +341,15 @@ class FileService:
         if not normalized_path:
             raise ValueError("Artifact path may not be empty")
 
-        artifact_content_type = content_type or guess_type(normalized_path)[0] or "application/octet-stream"
+        artifact_content_type = (
+            content_type or guess_type(normalized_path)[0] or "application/octet-stream"
+        )
         object_key = f"{thread_id}/artifacts/{normalized_path}"
         self._storage.put_object(object_key, content, artifact_content_type)
 
-        existing = self._repository.get_file_by_object_key(thread_id=thread_id, object_key=object_key)
+        existing = self._repository.get_file_by_object_key(
+            thread_id=thread_id, object_key=object_key
+        )
         if existing is not None:
             record = self._repository.update_file(
                 thread_id=thread_id,
@@ -334,10 +425,42 @@ class FileService:
         *,
         thread_id: str,
         object_key: str,
+        purpose: str | None = None,
         expected_file_id: str | None = None,
     ) -> None:
-        expected_prefix = f"{thread_id}/"
-        if expected_file_id is not None:
+        if purpose == "artifact":
+            expected_prefix = f"{thread_id}/artifacts/"
+        elif expected_file_id is not None:
             expected_prefix = f"{thread_id}/{expected_file_id}/"
+        else:
+            expected_prefix = f"{thread_id}/"
         if not object_key.startswith(expected_prefix):
             raise ValueError("File not found")
+
+    def _get_authorized_file(
+        self,
+        *,
+        actor_user_id: str,
+        actor_role: str,
+        thread_id: str,
+        file_id: str,
+    ):
+        if self._thread_service:
+            thread = self._thread_service.get_thread_for_actor(
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                thread_id=thread_id,
+            )
+            if not thread:
+                raise ValueError("Thread not found")
+
+        record = self._repository.get_file(thread_id=thread_id, file_id=file_id)
+        if not record:
+            raise ValueError("File not found")
+        self._assert_valid_thread_object_key(
+            thread_id=thread_id,
+            object_key=record.object_key,
+            purpose=record.kind,
+            expected_file_id=file_id if record.kind != "artifact" else None,
+        )
+        return record

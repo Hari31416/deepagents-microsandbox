@@ -46,7 +46,8 @@ just frontend-setup
 just frontend-start
 ```
 
-The UI will be available at `http://localhost:5173`.
+The UI will be available at `http://localhost:3001`.
+Set `VITE_API_BASE_URL` to the backend origin, for example `http://localhost:8000/api`.
 
 ## 5. Environment Variables
 

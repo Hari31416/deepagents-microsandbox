@@ -6,13 +6,17 @@ from app.config import get_settings
 
 
 def _login(client: TestClient, *, email: str, password: str) -> None:
-    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    response = client.post(
+        "/api/auth/login", json={"email": email, "password": password}
+    )
     assert response.status_code == 200, response.text
 
 
 def _login_super_admin(client: TestClient) -> None:
     settings = get_settings()
-    _login(client, email=settings.super_admin_email, password=settings.super_admin_password)
+    _login(
+        client, email=settings.super_admin_email, password=settings.super_admin_password
+    )
 
 
 def test_seeded_super_admin_can_login_and_read_profile() -> None:
@@ -98,7 +102,9 @@ def test_user_cannot_access_admin_routes_or_other_user_threads() -> None:
 
     user_one_client = TestClient(app)
     _login(user_one_client, email="user-one@example.com", password="UserOne123!")
-    thread_response = user_one_client.post("/api/threads", json={"title": "Private thread"})
+    thread_response = user_one_client.post(
+        "/api/threads", json={"title": "Private thread"}
+    )
     assert thread_response.status_code == 201, thread_response.text
     thread_id = thread_response.json()["thread_id"]
 
@@ -179,10 +185,28 @@ def test_admin_visibility_excludes_super_admin_and_other_admin_threads() -> None
     visible_titles = {thread["title"] for thread in list_response.json()["threads"]}
     assert visible_titles == {"Admin One Private", "User Support Thread"}
 
-    assert admin_one_client.get(f"/api/threads/{user_thread['thread_id']}").status_code == 200
-    assert admin_one_client.get(f"/api/threads/{super_admin_thread['thread_id']}").status_code == 404
-    assert admin_one_client.get(f"/api/threads/{admin_two_thread['thread_id']}").status_code == 404
-    assert admin_one_client.get(f"/api/threads/{admin_one_thread['thread_id']}").status_code == 200
+    assert (
+        admin_one_client.get(f"/api/threads/{user_thread['thread_id']}").status_code
+        == 200
+    )
+    assert (
+        admin_one_client.get(
+            f"/api/threads/{super_admin_thread['thread_id']}"
+        ).status_code
+        == 404
+    )
+    assert (
+        admin_one_client.get(
+            f"/api/threads/{admin_two_thread['thread_id']}"
+        ).status_code
+        == 404
+    )
+    assert (
+        admin_one_client.get(
+            f"/api/threads/{admin_one_thread['thread_id']}"
+        ).status_code
+        == 200
+    )
 
 
 def test_password_reset_revokes_existing_refresh_tokens() -> None:

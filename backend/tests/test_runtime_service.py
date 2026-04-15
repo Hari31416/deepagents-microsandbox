@@ -40,7 +40,9 @@ def test_runtime_service_uses_checkpointer_once(monkeypatch) -> None:
     )
 
     service = RuntimeService(
-        settings=Settings(database_url="postgresql+psycopg://user:pass@localhost:5432/app"),
+        settings=Settings(
+            database_url="postgresql+psycopg://user:pass@localhost:5432/app"
+        ),
         graph_factory=graph_factory,
     )
 

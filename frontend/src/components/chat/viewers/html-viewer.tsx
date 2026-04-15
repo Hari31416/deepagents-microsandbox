@@ -15,7 +15,7 @@ export function HtmlViewer({ url }: HtmlViewerProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch(url)
+      const response = await fetch(url, { credentials: 'include' })
       if (!response.ok) throw new Error('Failed to fetch HTML content')
       const text = await response.text()
       setContent(text)

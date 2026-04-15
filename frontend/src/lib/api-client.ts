@@ -1,6 +1,9 @@
 import axios from "axios"
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api"
+const DEFAULT_API_BASE_URL = "http://localhost:8000/api"
+const API_BASE_URL = normalizeApiBaseUrl(
+  import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
+)
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -9,6 +12,20 @@ export const apiClient = axios.create({
     "Content-Type": "application/json",
   },
 })
+
+function normalizeApiBaseUrl(rawValue: string): string {
+  const trimmed = rawValue.trim()
+  if (!trimmed) {
+    return DEFAULT_API_BASE_URL
+  }
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed.replace(/\/+$/, "")
+  }
+  if (trimmed.startsWith("/")) {
+    return new URL(trimmed, window.location.origin).toString().replace(/\/+$/, "")
+  }
+  return `http://${trimmed}`.replace(/\/+$/, "")
+}
 
 export interface AuthUser {
   user_id: string
@@ -119,6 +136,30 @@ export const threadsApi = {
 }
 
 export const filesApi = {
+  upload: async (params: {
+    thread_id: string
+    file: File
+    purpose: "upload"
+  }) => {
+    const uploadUrl = new URL(`${API_BASE_URL}/files/upload`)
+    uploadUrl.searchParams.set("thread_id", params.thread_id)
+    uploadUrl.searchParams.set("filename", params.file.name)
+    uploadUrl.searchParams.set("purpose", params.purpose)
+    const response = await fetch(uploadUrl.toString(), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": params.file.type || "application/octet-stream",
+      },
+      body: params.file,
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Upload failed" }))
+      throw new Error(error.detail || "Upload failed")
+    }
+    return (await response.json()) as ThreadFile
+  },
+
   presignUpload: (params: {
     thread_id: string
     filename: string
@@ -136,6 +177,9 @@ export const filesApi = {
     thread_id: string
     file_id: string
   }) => apiClient.post<PresignedDownload>("/files/presign-download", params).then((r) => r.data),
+
+  getViewUrl: (threadId: string, fileId: string) => `${API_BASE_URL}/files/${threadId}/${fileId}`,
+  getDownloadUrl: (threadId: string, fileId: string) => `${API_BASE_URL}/files/${threadId}/${fileId}/download`,
 }
 
 export interface SseEvent {

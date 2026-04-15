@@ -5,14 +5,15 @@ The frontend communicates with the backend via a structured API layer located in
 ## 1. Axios Client
 
 A centralized Axios instance is configured with:
-- `baseURL`: Loaded from environment variables.
+- `baseURL`: Loaded from environment variables as an absolute backend URL.
 - `Headers`: Includes `Content-Type: application/json` and the `X-User-Id` header for authentication.
 
 ## 2. API Modules
 
 API calls are grouped into objects for clarity:
 - **`threadsApi`**: Methods for `list`, `create`, `getMessages`, etc.
-- **`filesApi`**: Methods for `presignUpload`, `completeUpload`, and `presignDownload`.
+- **`filesApi`**: Methods for backend-owned upload, view, download, and compatibility download links.
+- File upload, preview, and download all go through the backend API, so the browser never needs a MinIO URL.
 
 ## 3. SSE Streaming Implementation
 

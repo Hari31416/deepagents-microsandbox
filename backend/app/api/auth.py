@@ -30,27 +30,42 @@ def get_current_user(
     services = get_services()
     token = _extract_bearer_token(authorization) or access_cookie
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
+        )
 
     try:
         user = services.auth_service.get_user_from_access_token(token)
     except PermissionError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+        ) from exc
 
     return UserContext(**user)
 
 
-def require_admin(user: Annotated[UserContext, Depends(get_current_user)]) -> UserContext:
+def require_admin(
+    user: Annotated[UserContext, Depends(get_current_user)],
+) -> UserContext:
     if not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
+        )
     return user
 
 
-def require_super_admin(user: Annotated[UserContext, Depends(get_current_user)]) -> UserContext:
+def require_super_admin(
+    user: Annotated[UserContext, Depends(get_current_user)],
+) -> UserContext:
     if not user.is_super_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required"
+        )
     return user
 
 

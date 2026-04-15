@@ -38,7 +38,7 @@ export function CsvViewer({ url, filename }: CsvViewerProps) {
   const fetchContent = async () => {
     setIsLoading(true)
     try {
-      const response = await fetch(url)
+      const response = await fetch(url, { credentials: 'include' })
       const text = await response.text()
       
       Papa.parse(text, {

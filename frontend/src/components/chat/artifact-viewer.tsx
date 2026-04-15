@@ -18,55 +18,43 @@ import { triggerDownload } from '@/lib/utils'
 
 export function ArtifactViewer() {
   const { selectedFile, setSelectedFile } = useStore()
-  const [presignedUrl, setPresignedUrl] = useState<string | null>(null)
+  const [fileUrl, setFileUrl] = useState<string | null>(null)
   
   useEffect(() => {
     if (!selectedFile) {
-      setPresignedUrl(null)
+      setFileUrl(null)
       return
     }
 
-    const fetchUrl = async () => {
-      try {
-        const { url } = await filesApi.presignDownload({
-          thread_id: selectedFile.thread_id,
-          file_id: selectedFile.file_id,
-        })
-        setPresignedUrl(url)
-      } catch (err) {
-        console.error('Failed to get presigned URL:', err)
-      }
-    }
-
-    fetchUrl()
+    setFileUrl(filesApi.getViewUrl(selectedFile.thread_id, selectedFile.file_id))
   }, [selectedFile])
 
   if (!selectedFile) return null
 
   const getViewer = () => {
-    if (!presignedUrl) return null
+    if (!fileUrl) return null
 
     const type = selectedFile.content_type.toLowerCase()
     const filename = selectedFile.original_filename.toLowerCase()
 
     if (type.includes('image')) {
-      return <ImageViewer url={presignedUrl} alt={selectedFile.original_filename} />
+      return <ImageViewer url={fileUrl} alt={selectedFile.original_filename} />
     }
     
     if (filename.endsWith('.csv')) {
-      return <CsvViewer url={presignedUrl} filename={selectedFile.original_filename} />
+      return <CsvViewer url={fileUrl} filename={selectedFile.original_filename} />
     }
 
     if (filename.endsWith('.py') || filename.endsWith('.json') || filename.endsWith('.js') || filename.endsWith('.ts') || filename.endsWith('.sh')) {
-      return <CodeViewer url={presignedUrl} filename={selectedFile.original_filename} />
+      return <CodeViewer url={fileUrl} filename={selectedFile.original_filename} />
     }
 
     if (filename.endsWith('.md') || filename.endsWith('.txt')) {
-      return <MarkdownViewer url={presignedUrl} filename={selectedFile.original_filename} />
+      return <MarkdownViewer url={fileUrl} filename={selectedFile.original_filename} />
     }
 
     if (type.includes('html') || filename.endsWith('.html')) {
-      return <HtmlViewer url={presignedUrl} />
+      return <HtmlViewer url={fileUrl} />
     }
 
     // Default to markdown/text for unknown text types or just the download link
@@ -79,7 +67,15 @@ export function ArtifactViewer() {
           <h3 className="text-lg font-black uppercase tracking-tight">No Preview Available</h3>
           <p className="text-sm text-slate-500 max-w-xs mx-auto">This file type cannot be previewed directly. You can download it to view locally.</p>
         </div>
-        <Button onClick={() => triggerDownload(presignedUrl, selectedFile.original_filename)} className="rounded-xl px-8 h-12 font-bold uppercase tracking-widest text-[11px] shadow-lg shadow-primary/20">
+        <Button
+          onClick={() =>
+            triggerDownload(
+              filesApi.getDownloadUrl(selectedFile.thread_id, selectedFile.file_id),
+              selectedFile.original_filename,
+            )
+          }
+          className="rounded-xl px-8 h-12 font-bold uppercase tracking-widest text-[11px] shadow-lg shadow-primary/20"
+        >
           Download File
         </Button>
       </div>
@@ -95,12 +91,17 @@ export function ArtifactViewer() {
             <span className="text-sm font-bold truncate max-w-[400px]">{selectedFile.original_filename}</span>
           </DialogTitle>
           <div className="flex items-center gap-2 pr-8">
-            {presignedUrl && (
+            {fileUrl && (
               <Button 
                 variant="ghost" 
                 size="icon" 
                 className="h-9 w-9 rounded-xl hover:bg-primary/5 hover:text-primary transition-all"
-                onClick={() => triggerDownload(presignedUrl, selectedFile.original_filename)}
+                onClick={() =>
+                  triggerDownload(
+                    filesApi.getDownloadUrl(selectedFile.thread_id, selectedFile.file_id),
+                    selectedFile.original_filename,
+                  )
+                }
               >
                 <ExternalLink className="h-4.5 w-4.5" />
               </Button>
@@ -108,7 +109,7 @@ export function ArtifactViewer() {
           </div>
         </DialogHeader>
         <div className="flex-1 p-0 overflow-hidden">
-          {!presignedUrl ? (
+          {!fileUrl ? (
             <div className="h-full flex items-center justify-center">
               <div className="flex flex-col items-center gap-4">
                 <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />

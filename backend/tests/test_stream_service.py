@@ -12,12 +12,20 @@ class StubThreadService:
     def __init__(self) -> None:
         self.updated_titles: list[dict[str, str]] = []
 
-    def get_thread_for_actor(self, *, actor_user_id: str, actor_role: str, thread_id: str):
+    def get_thread_for_actor(
+        self, *, actor_user_id: str, actor_role: str, thread_id: str
+    ):
         if actor_user_id == "user-1" and thread_id == "thread-1":
-            return {"thread_id": thread_id, "owner_id": "user-1", "title": "New Conversation"}
+            return {
+                "thread_id": thread_id,
+                "owner_id": "user-1",
+                "title": "New Conversation",
+            }
         return None
 
-    def update_thread_title(self, actor_user_id: str, actor_role: str, thread_id: str, title: str):
+    def update_thread_title(
+        self, actor_user_id: str, actor_role: str, thread_id: str, title: str
+    ):
         self.updated_titles.append(
             {
                 "owner_id": actor_user_id,
@@ -58,11 +66,15 @@ class StubFileService:
         self.content_requests: list[str] = []
         self.imported_artifacts: list[dict[str, object]] = []
 
-    def list_files(self, actor_user_id: str, actor_role: str, thread_id: str) -> list[dict[str, object]]:
+    def list_files(
+        self, actor_user_id: str, actor_role: str, thread_id: str
+    ) -> list[dict[str, object]]:
         self.list_files_calls.append((actor_user_id, actor_role, thread_id))
         return list(self._files)
 
-    def list_files_by_ids(self, thread_id: str, file_ids: list[str]) -> list[dict[str, object]]:
+    def list_files_by_ids(
+        self, thread_id: str, file_ids: list[str]
+    ) -> list[dict[str, object]]:
         self.list_files_by_ids_calls.append((thread_id, list(file_ids)))
         file_ids_set = set(file_ids)
         return [file for file in self._files if file["file_id"] in file_ids_set]
@@ -101,7 +113,9 @@ class StubSandboxBackend:
     next_session_files: list[dict[str, object]] | None = None
     next_downloads: dict[str, bytes] = {}
 
-    def __init__(self, *, executor_base_url: str, thread_id: str, user_id: str | None = None) -> None:
+    def __init__(
+        self, *, executor_base_url: str, thread_id: str, user_id: str | None = None
+    ) -> None:
         self.executor_base_url = executor_base_url
         self.thread_id = thread_id
         self.user_id = user_id
@@ -127,7 +141,9 @@ class StubSandboxBackend:
                 {
                     "path": path,
                     "content": StubSandboxBackend.next_downloads.get(path),
-                    "error": None if path in StubSandboxBackend.next_downloads else "file_not_found",
+                    "error": None
+                    if path in StubSandboxBackend.next_downloads
+                    else "file_not_found",
                 },
             )()
             for path in paths
@@ -199,7 +215,11 @@ class StubMessageChunk:
 
 
 class StubGraph:
-    def __init__(self, parts: list[dict[str, object]] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        parts: list[dict[str, object]] | None = None,
+        error: Exception | None = None,
+    ) -> None:
         self.parts = parts or []
         self.error = error
         self.calls: list[dict[str, object]] = []
@@ -246,7 +266,13 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
                                 "type": "ai",
                                 "id": "ai-1",
                                 "content": "Inspecting iris.csv",
-                                "tool_calls": [{"id": "call-1", "name": "python", "args": {"code": "print(1)"}}],
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "name": "python",
+                                        "args": {"code": "print(1)"},
+                                    }
+                                ],
                             },
                             {
                                 "type": "tool",
@@ -557,7 +583,9 @@ def test_stream_service_records_runtime_failures() -> None:
         message_service=message_service,
         run_event_service=run_event_service,
         run_service=run_service,
-        runtime_service=StubRuntimeService(StubGraph(error=RuntimeError("model backend offline"))),
+        runtime_service=StubRuntimeService(
+            StubGraph(error=RuntimeError("model backend offline"))
+        ),
         settings=Settings(database_url="sqlite+pysqlite:///:memory:"),
         sandbox_backend_factory=StubSandboxBackend,
     )
@@ -632,7 +660,9 @@ def test_stream_service_records_runtime_failures() -> None:
 
 def test_stream_service_fails_when_graph_finishes_without_final_response() -> None:
     StubSandboxBackend.next_upload_results = None
-    StubSandboxBackend.next_session_files = [{"path": "iris.csv", "size": 31, "content_type": "text/csv"}]
+    StubSandboxBackend.next_session_files = [
+        {"path": "iris.csv", "size": 31, "content_type": "text/csv"}
+    ]
     StubSandboxBackend.next_downloads = {}
     thread_service = StubThreadService()
     message_service = StubMessageService()
@@ -657,7 +687,11 @@ def test_stream_service_fails_when_graph_finishes_without_final_response() -> No
                                         "id": "ai-1",
                                         "content": "",
                                         "tool_calls": [
-                                            {"id": "call-1", "name": "python", "args": {"code": "print(1)"}}
+                                            {
+                                                "id": "call-1",
+                                                "name": "python",
+                                                "args": {"code": "print(1)"},
+                                            }
                                         ],
                                     }
                                 ]

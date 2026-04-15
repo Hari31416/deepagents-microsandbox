@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from typing import BinaryIO
 from uuid import uuid4
 
 from minio import Minio
@@ -47,7 +48,9 @@ class MinioStorage:
 
     def create_presigned_upload(self, object_key: str) -> PresignedUrl:
         expires = timedelta(seconds=self._settings.presigned_url_expiry_seconds)
-        url = self._client.presigned_put_object(self.bucket_name, object_key, expires=expires)
+        url = self._client.presigned_put_object(
+            self.bucket_name, object_key, expires=expires
+        )
         return PresignedUrl(
             object_key=object_key,
             url=url,
@@ -57,7 +60,9 @@ class MinioStorage:
 
     def create_presigned_download(self, object_key: str) -> PresignedUrl:
         expires = timedelta(seconds=self._settings.presigned_url_expiry_seconds)
-        url = self._client.presigned_get_object(self.bucket_name, object_key, expires=expires)
+        url = self._client.presigned_get_object(
+            self.bucket_name, object_key, expires=expires
+        )
         return PresignedUrl(
             object_key=object_key,
             url=url,
@@ -81,7 +86,9 @@ class MinioStorage:
             response.close()
             response.release_conn()
 
-    def put_object(self, object_key: str, content: bytes, content_type: str | None = None) -> None:
+    def put_object(
+        self, object_key: str, content: bytes, content_type: str | None = None
+    ) -> None:
         self._client.put_object(
             self.bucket_name,
             object_key,
@@ -90,8 +97,26 @@ class MinioStorage:
             content_type=content_type or "application/octet-stream",
         )
 
+    def put_object_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        *,
+        length: int,
+        content_type: str | None = None,
+    ) -> None:
+        self._client.put_object(
+            self.bucket_name,
+            object_key,
+            stream,
+            length=length,
+            content_type=content_type or "application/octet-stream",
+        )
+
     def delete_prefix(self, prefix: str) -> None:
-        objects = self._client.list_objects(self.bucket_name, prefix=prefix, recursive=True)
+        objects = self._client.list_objects(
+            self.bucket_name, prefix=prefix, recursive=True
+        )
         for obj in objects:
             self._client.remove_object(self.bucket_name, obj.object_name)
 

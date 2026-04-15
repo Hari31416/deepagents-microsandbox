@@ -89,21 +89,34 @@ Force reset a user's password.
 
 ## Files & Storage
 
+### `POST /files/upload`
+Upload a file through the backend and persist it to object storage.
+- **Role Required**: Authenticated (Owner or Admin)
+- **Query**: `thread_id`, `filename`, `purpose`
+- **Body**: Raw file bytes
+- **Notes**: The backend stores the file in MinIO and returns the created file record.
+
 ### `POST /files/presign-upload`
-Generate a presigned MinIO URL for uploading files.
+Legacy direct-to-MinIO upload flow.
 - **Role Required**: Authenticated (Owner or Admin)
 
 ### `POST /files/complete-upload`
-Finalize file registration after binary transport.
+Legacy upload finalization endpoint for presigned uploads.
 - **Role Required**: Authenticated (Owner or Admin)
-- **Body**: `{ "thread_id": "...", "file_id": "..." }`
-- **Notes**: The backend resolves filename, object key, size, and content type from the server-issued upload intent and stored object metadata.
 
 ### `POST /files/presign-download`
 Generate a temporary download link.
 - **Role Required**: Authenticated (Owner or Admin)
 - **Body**: `{ "thread_id": "...", "file_id": "..." }`
-- **Notes**: Raw `object_key` download presigning is not exposed to clients.
+- **Notes**: Returns a backend file URL for compatibility; the frontend should prefer direct backend file endpoints.
+
+### `GET /files/{thread_id}/{file_id}`
+Read file content through the backend.
+- **Role Required**: Authenticated (Owner or Admin)
+
+### `GET /files/{thread_id}/{file_id}/download`
+Download file content through the backend.
+- **Role Required**: Authenticated (Owner or Admin)
 
 ---
 

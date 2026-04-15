@@ -35,11 +35,10 @@ export function SidePanel() {
 
   const handleDownload = async (file: ThreadFile) => {
     try {
-      const presign = await filesApi.presignDownload({
-        thread_id: file.thread_id,
-        file_id: file.file_id
-      })
-      await triggerDownload(presign.url, file.original_filename)
+      await triggerDownload(
+        filesApi.getDownloadUrl(file.thread_id, file.file_id),
+        file.original_filename,
+      )
     } catch (err) {
       console.error("Download failed:", err)
     }

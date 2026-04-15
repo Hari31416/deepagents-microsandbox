@@ -65,7 +65,9 @@ class RunEventService:
     ) -> list[dict[str, object]]:
         return [
             asdict(self._to_record(record))
-            for record in self._repository.list_events(owner_id=owner_id, thread_id=thread_id, run_id=run_id)
+            for record in self._repository.list_events(
+                owner_id=owner_id, thread_id=thread_id, run_id=run_id
+            )
         ]
 
     @staticmethod

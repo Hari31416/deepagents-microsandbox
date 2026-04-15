@@ -29,9 +29,9 @@ When a user sends a message, the following sequence occurs:
 ## 2. File Upload Flow
 
 1.  **Frontend**: User selects a file in the workspace or chat.
-2.  **Backend (Pre-sign)**: Frontend calls `/api/files/presign-upload` to get a S3/MinIO URL.
-3.  **Direct Upload**: Frontend uploads the binary directly to MinIO using the presigned URL.
-4.  **Backend (Complete)**: Frontend calls `/api/files/complete-upload` to register the file in PostgreSQL.
+2.  **Backend Upload**: Frontend calls `/api/files/upload` with the raw file body and upload metadata.
+3.  **Storage Persist**: Backend streams the file into MinIO and records it in PostgreSQL.
+4.  **State Refresh**: Frontend reloads thread files from `/api/threads/{thread_id}/files`.
 
 ## 3. Sandbox Code Execution
 

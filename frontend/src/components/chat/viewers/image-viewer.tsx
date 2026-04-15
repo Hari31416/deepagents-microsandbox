@@ -8,6 +8,7 @@ interface ImageViewerProps {
 }
 
 export function ImageViewer({ url, alt }: ImageViewerProps) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [scale, setScale] = useState(1)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
@@ -52,6 +53,39 @@ export function ImageViewer({ url, alt }: ImageViewerProps) {
     return () => container.removeEventListener('wheel', handleWheel)
   }, [])
 
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let cancelled = false
+
+    const loadImage = async () => {
+      try {
+        const response = await fetch(url, { credentials: 'include' })
+        if (!response.ok) {
+          throw new Error(`Failed to load image: ${response.status}`)
+        }
+        const blob = await response.blob()
+        objectUrl = window.URL.createObjectURL(blob)
+        if (!cancelled) {
+          setImageUrl(objectUrl)
+        }
+      } catch (err) {
+        console.error('Failed to load image content:', err)
+        if (!cancelled) {
+          setImageUrl(null)
+        }
+      }
+    }
+
+    void loadImage()
+
+    return () => {
+      cancelled = true
+      if (objectUrl) {
+        window.URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [url])
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/10">
@@ -80,7 +114,7 @@ export function ImageViewer({ url, alt }: ImageViewerProps) {
         onMouseLeave={handleMouseUp}
       >
         <img
-          src={url}
+          src={imageUrl || undefined}
           alt={alt}
           className="max-w-full max-h-full object-contain transition-transform duration-200 ease-out select-none shadow-2xl"
           style={{

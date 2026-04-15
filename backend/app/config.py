@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     )
     postgres_uri: str | None = Field(default=None, alias="POSTGRES_URI")
     executor_base_url: str = "http://localhost:3000"
+    cors_allowed_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
     agent_run_timeout_seconds: int = 600
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
@@ -85,6 +86,14 @@ class Settings(BaseSettings):
         if self.database_url.startswith("postgresql://"):
             return self.database_url
         return None
+
+    @property
+    def parsed_cors_allowed_origins(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache(maxsize=1)

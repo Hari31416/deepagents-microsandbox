@@ -24,9 +24,12 @@ API routes are organized by feature in the `app/api/routes` directory.
 - **Prefix**: `/api/files`
 - **Responsibilities**: Secure file handling via presigned URLs.
 - **Endpoints**:
-    - `POST /presign-upload`: Generate a URL for direct upload to MinIO.
-    - `POST /complete-upload`: Register an uploaded file in the database using the server-issued `file_id` intent.
+    - `POST /upload`: Accept a file from the browser and store it in MinIO via the backend.
+    - `POST /presign-upload`: Legacy direct upload flow.
+    - `POST /complete-upload`: Legacy upload finalization flow.
     - `POST /presign-download`: Generate a URL for downloading a DB-backed file by `file_id`.
+    - `GET /{thread_id}/{file_id}`: Read file content through the backend.
+    - `GET /{thread_id}/{file_id}/download`: Download file content through the backend.
 
 ### 4. Chat (`chat.py`)
 - **Prefix**: `/api/chat`

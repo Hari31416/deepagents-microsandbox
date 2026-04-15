@@ -25,7 +25,7 @@ The system uses environment variables for configuration across all components.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | `/api` | Path to the backend service |
+| `VITE_API_BASE_URL` | `http://localhost:8000/api` | Absolute backend API URL used by the browser |
 | `VITE_DEFAULT_USER_ID` | `dev-user` | Static ID for dev testing |
 
 ## Infrastructure Variables (Root `.env`)
@@ -39,3 +39,4 @@ Used by `docker-compose.yml`.
 | `REDIS_PASSWORD` | `redis_password` | Redis access password |
 | `MINIO_ROOT_USER` | `minioadmin` | MinIO admin user |
 | `MINIO_ROOT_PASSWORD` | `minioadminpassword` | MinIO admin password |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Frontend origins allowed to call the backend with credentials |
