@@ -112,6 +112,8 @@ class StubSandboxBackend:
     next_upload_results: list[FileUploadResponse] | None = None
     next_session_files: list[dict[str, object]] | None = None
     next_downloads: dict[str, bytes] = {}
+    next_delete_result: bool = True
+    delete_calls: int = 0
 
     def __init__(
         self, *, executor_base_url: str, thread_id: str, user_id: str | None = None
@@ -141,13 +143,19 @@ class StubSandboxBackend:
                 {
                     "path": path,
                     "content": StubSandboxBackend.next_downloads.get(path),
-                    "error": None
-                    if path in StubSandboxBackend.next_downloads
-                    else "file_not_found",
+                    "error": (
+                        None
+                        if path in StubSandboxBackend.next_downloads
+                        else "file_not_found"
+                    ),
                 },
             )()
             for path in paths
         ]
+
+    def delete_session(self) -> bool:
+        StubSandboxBackend.delete_calls += 1
+        return StubSandboxBackend.next_delete_result
 
 
 class StubRunService:
@@ -301,6 +309,8 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
     StubSandboxBackend.next_downloads = {
         "gender_survival_rate.png": b"png-bytes",
     }
+    StubSandboxBackend.next_delete_result = True
+    StubSandboxBackend.delete_calls = 0
     service = StreamService(
         thread_service=thread_service,
         file_service=file_service,
@@ -350,10 +360,11 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
             "content_type": "image/png",
         }
     ]
-    assert len(StubSandboxBackend.instances) == 2
+    assert len(StubSandboxBackend.instances) == 3
     assert StubSandboxBackend.instances[0].uploaded_files == [
         ("iris.csv", b"sepal_length,sepal_width\n5.1,3.5\n")
     ]
+    assert StubSandboxBackend.delete_calls == 1
     assert run_service.created_runs == [
         {
             "run_id": "run-1",
@@ -508,6 +519,8 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     ]
     StubSandboxBackend.next_session_files = None
     StubSandboxBackend.next_downloads = {}
+    StubSandboxBackend.next_delete_result = True
+    StubSandboxBackend.delete_calls = 0
     message_service = StubMessageService()
     run_event_service = StubRunEventService()
     run_service = StubRunService()
@@ -567,12 +580,15 @@ def test_stream_service_stops_when_workspace_staging_fails() -> None:
     ]
     assert message_service.updated_messages == []
     assert run_event_service.created_events == []
+    assert StubSandboxBackend.delete_calls == 1
 
 
 def test_stream_service_records_runtime_failures() -> None:
     StubSandboxBackend.next_upload_results = None
     StubSandboxBackend.next_session_files = None
     StubSandboxBackend.next_downloads = {}
+    StubSandboxBackend.next_delete_result = True
+    StubSandboxBackend.delete_calls = 0
     thread_service = StubThreadService()
     message_service = StubMessageService()
     run_event_service = StubRunEventService()
@@ -656,6 +672,7 @@ def test_stream_service_records_runtime_failures() -> None:
             "payload": {"detail": "model backend offline", "message_id": "msg-2"},
         },
     ]
+    assert StubSandboxBackend.delete_calls == 1
 
 
 def test_stream_service_fails_when_graph_finishes_without_final_response() -> None:
@@ -664,6 +681,8 @@ def test_stream_service_fails_when_graph_finishes_without_final_response() -> No
         {"path": "iris.csv", "size": 31, "content_type": "text/csv"}
     ]
     StubSandboxBackend.next_downloads = {}
+    StubSandboxBackend.next_delete_result = True
+    StubSandboxBackend.delete_calls = 0
     thread_service = StubThreadService()
     message_service = StubMessageService()
     run_event_service = StubRunEventService()
@@ -730,3 +749,4 @@ def test_stream_service_fails_when_graph_finishes_without_final_response() -> No
             "event_count": 2,
         }
     ]
+    assert StubSandboxBackend.delete_calls == 1

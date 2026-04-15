@@ -123,6 +123,7 @@ class StreamService:
             )
             assistant_message_id = str(assistant_message["message_id"])
             yield _sse("error", {"detail": str(exc)})
+            self._teardown_sandbox_session(owner_id=owner_id, thread_id=thread_id)
             return
 
         resolved_file_ids = [str(file["file_id"]) for file in workspace_files]
@@ -362,6 +363,8 @@ class StreamService:
                 {"detail": detail, "run_id": run["run_id"]},
                 event_id=next_event_id(),
             )
+        finally:
+            self._teardown_sandbox_session(owner_id=owner_id, thread_id=thread_id)
 
     async def _stream_graph_events(
         self,
@@ -508,6 +511,27 @@ class StreamService:
                 f"{result.path}: {result.error}" for result in failures
             )
             raise RuntimeError(f"Failed to stage files in sandbox: {failure_details}")
+
+    def _teardown_sandbox_session(self, *, owner_id: str, thread_id: str) -> None:
+        backend = self._sandbox_backend_factory(
+            executor_base_url=self._settings.executor_base_url,
+            thread_id=thread_id,
+            user_id=owner_id,
+        )
+
+        try:
+            deleted = backend.delete_session()
+        except Exception:
+            logger.exception(
+                "Failed to tear down sandbox session for thread %s", thread_id
+            )
+            return
+
+        if not deleted:
+            logger.warning(
+                "Sandbox session for thread %s could not be deleted because it is still active",
+                thread_id,
+            )
 
     @staticmethod
     def _extract_message_text(message_chunk: object) -> str:

@@ -184,6 +184,15 @@ class MicrosandboxBackend(BaseSandbox):
         files = payload.get("files", [])
         return [file for file in files if isinstance(file, dict)]
 
+    def delete_session(self) -> bool:
+        response = self._client.delete(f"/v1/sessions/{self._session_id}")
+        if response.status_code in {204, 404}:
+            return True
+        if response.status_code == 409:
+            return False
+        response.raise_for_status()
+        return False
+
     def _ensure_session(self) -> None:
         response = self._client.post(
             "/v1/sessions", json={"session_id": self._session_id}
