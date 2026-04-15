@@ -34,3 +34,22 @@ def test_settings_accept_secure_auth_configuration_outside_development() -> None
     )
 
     assert settings.app_env == "production"
+
+
+def test_settings_default_agent_max_run_steps() -> None:
+    settings = Settings()
+
+    assert settings.agent_max_run_steps == 50
+
+
+def test_settings_accept_agent_max_run_steps_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_MAX_RUN_STEPS", "75")
+
+    settings = Settings()
+
+    assert settings.agent_max_run_steps == 75
+
+
+def test_settings_reject_non_positive_agent_max_run_steps() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        Settings(agent_max_run_steps=0)

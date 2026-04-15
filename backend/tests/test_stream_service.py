@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from app.agent.backend import FileUploadResponse
 from app.config import Settings
 from app.services.stream_service import StreamService
+from langgraph.errors import GraphRecursionError
 
 
 class StubThreadService:
@@ -497,7 +498,10 @@ def test_stream_service_emits_backend_owned_sse_and_records_runs() -> None:
                 ],
                 "selected_file_ids": ["file-1"],
             },
-            "config": {"configurable": {"thread_id": "thread-1"}},
+            "config": {
+                "recursion_limit": 50,
+                "configurable": {"thread_id": "thread-1"},
+            },
             "context": {
                 "user_id": "user-1",
                 "thread_id": "thread-1",
@@ -671,6 +675,89 @@ def test_stream_service_records_runtime_failures() -> None:
             "status": "failed",
             "payload": {"detail": "model backend offline", "message_id": "msg-2"},
         },
+    ]
+    assert StubSandboxBackend.delete_calls == 1
+
+
+def test_stream_service_fails_when_run_reaches_step_limit() -> None:
+    StubSandboxBackend.next_upload_results = None
+    StubSandboxBackend.next_session_files = None
+    StubSandboxBackend.next_downloads = {}
+    StubSandboxBackend.next_delete_result = True
+    StubSandboxBackend.delete_calls = 0
+    thread_service = StubThreadService()
+    message_service = StubMessageService()
+    run_event_service = StubRunEventService()
+    run_service = StubRunService()
+    graph = StubGraph(error=GraphRecursionError())
+    service = StreamService(
+        thread_service=thread_service,
+        file_service=StubFileService(),
+        message_service=message_service,
+        run_event_service=run_event_service,
+        run_service=run_service,
+        runtime_service=StubRuntimeService(graph),
+        settings=Settings(
+            database_url="sqlite+pysqlite:///:memory:",
+            agent_max_run_steps=7,
+        ),
+        sandbox_backend_factory=StubSandboxBackend,
+    )
+
+    async def consume_stream() -> str:
+        chunks: list[str] = []
+        async for chunk in service.stream_chat(
+            actor_user_id="user-1",
+            actor_role="user",
+            thread_id="thread-1",
+            message="Summarize the dataset",
+            selected_file_ids=["file-1"],
+        ):
+            chunks.append(chunk)
+        return "".join(chunks)
+
+    output = asyncio.run(consume_stream())
+
+    assert "event: error" in output
+    assert "Run stopped after reaching the maximum step limit" in output
+    assert run_service.failed_runs == [
+        {
+            "run_id": "run-1",
+            "error_detail": "Run stopped after reaching the maximum step limit",
+            "output_text": "",
+            "event_count": 1,
+        }
+    ]
+    assert graph.calls == [
+        {
+            "payload": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Workspace files are mounted under /workspace in the sandbox.\n"
+                            "Workspace files currently available in the sandbox:\n"
+                            "- /workspace/iris.csv (file_id: file-1)\n\n"
+                            "User request:\n"
+                            "Summarize the dataset"
+                        ),
+                    }
+                ],
+                "selected_file_ids": ["file-1"],
+            },
+            "config": {
+                "recursion_limit": 7,
+                "configurable": {"thread_id": "thread-1"},
+            },
+            "context": {
+                "user_id": "user-1",
+                "thread_id": "thread-1",
+                "selected_file_ids": ["file-1"],
+                "workspace_files": ["/workspace/iris.csv"],
+            },
+            "stream_mode": ("updates", "messages"),
+            "version": "v2",
+        }
     ]
     assert StubSandboxBackend.delete_calls == 1
 

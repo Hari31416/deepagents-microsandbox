@@ -14,6 +14,7 @@ from app.services.run_event_service import RunEventService
 from app.services.run_service import RunService
 from app.services.runtime_service import RuntimeService
 from app.services.thread_service import ThreadService
+from langgraph.errors import GraphRecursionError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -377,6 +378,7 @@ class StreamService:
         workspace_files: list[str],
     ) -> AsyncIterator[dict[str, object]]:
         config = {
+            "recursion_limit": self._settings.agent_max_run_steps,
             "configurable": {
                 "thread_id": thread_id,
             }
@@ -553,6 +555,8 @@ class StreamService:
 
     @staticmethod
     def _normalize_runtime_error(exc: Exception) -> str:
+        if isinstance(exc, GraphRecursionError):
+            return "Run stopped after reaching the maximum step limit"
         detail = str(exc).strip()
         return detail or exc.__class__.__name__
 

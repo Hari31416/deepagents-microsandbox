@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     executor_base_url: str = "http://localhost:3000"
     cors_allowed_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
     agent_run_timeout_seconds: int = 600
+    agent_max_run_steps: int = Field(default=50, ge=1)
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadminpassword"

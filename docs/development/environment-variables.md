@@ -11,6 +11,7 @@ The system uses environment variables for configuration across all components.
 | `POSTGRES_URI` | `None` | Alternative URI for LangGraph |
 | `EXECUTOR_BASE_URL` | `http://localhost:3000` | URL of the sandbox service |
 | `AGENT_MODEL` | `openai:gpt-4o-mini` | LLM model identifier |
+| `AGENT_MAX_RUN_STEPS` | `50` | Hard cap on LangGraph execution steps before the run is aborted to prevent loops |
 | `MINIO_ENDPOINT` | `localhost:9000` | MinIO server address |
 | `MINIO_ACCESS_KEY` | `minioadmin` | MinIO credentials |
 | `MINIO_SECRET_KEY` | `minioadminpassword` | MinIO credentials |
