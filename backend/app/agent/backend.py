@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 
 
 _UNSAFE_PATH_PATTERN = re.compile(r"(^\.\.?/)|(/\.\.?/)|(^\.\.$)|/\.\.$")
+_GUEST_WORKSPACE_PREFIX = "workspace/"
 
 
 def build_executor_session_id(thread_id: str) -> str:
@@ -56,6 +57,10 @@ def normalize_workspace_path(path: str) -> str:
     if not candidate:
         raise ValueError("Path may not be empty")
     candidate = candidate.lstrip("/")
+    if candidate == "workspace":
+        raise ValueError("Path may not point at the workspace root")
+    if candidate.startswith(_GUEST_WORKSPACE_PREFIX):
+        candidate = candidate[len(_GUEST_WORKSPACE_PREFIX) :]
     if _UNSAFE_PATH_PATTERN.search(candidate):
         raise ValueError(f"Path escapes workspace: {path}")
     if candidate in {".", ".."}:
