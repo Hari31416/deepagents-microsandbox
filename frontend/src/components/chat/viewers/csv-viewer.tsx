@@ -66,28 +66,42 @@ export function CsvViewer({ url, filename }: CsvViewerProps) {
   }, [url])
 
   const columns = useMemo<ColumnDef<any>[]>(() => {
-    return headers.map(header => ({
-      accessorKey: header,
-      header: ({ column }) => {
-        return (
-          <Button
-            variant="ghost"
-            className="h-8 px-2 -ml-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-primary transition-colors hover:bg-transparent"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            {header}
-            {column.getIsSorted() === "asc" ? (
-              <ChevronUp className="ml-1 h-3 w-3" />
-            ) : column.getIsSorted() === "desc" ? (
-              <ChevronDown className="ml-1 h-3 w-3" />
-            ) : (
-              <ArrowUpDown className="ml-1 h-3 w-3 opacity-20" />
-            )}
-          </Button>
-        )
-      },
-      cell: ({ row }) => <div className="text-slate-600 dark:text-slate-300 font-medium">{row.getValue(header)}</div>,
-    }))
+    const seenColumnIds = new Map<string, number>()
+
+    return headers.map((header, index) => {
+      const normalizedHeader = (header ?? '').trim()
+      const baseColumnId = normalizedHeader || `column_${index}`
+      const duplicateCount = seenColumnIds.get(baseColumnId) ?? 0
+
+      seenColumnIds.set(baseColumnId, duplicateCount + 1)
+
+      const columnId = duplicateCount === 0 ? baseColumnId : `${baseColumnId}_${duplicateCount}`
+      const columnLabel = normalizedHeader || `Column ${index + 1}`
+
+      return {
+        id: columnId,
+        accessorKey: header,
+        header: ({ column }) => {
+          return (
+            <Button
+              variant="ghost"
+              className="h-8 px-2 -ml-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-primary transition-colors hover:bg-transparent"
+              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            >
+              {columnLabel}
+              {column.getIsSorted() === "asc" ? (
+                <ChevronUp className="ml-1 h-3 w-3" />
+              ) : column.getIsSorted() === "desc" ? (
+                <ChevronDown className="ml-1 h-3 w-3" />
+              ) : (
+                <ArrowUpDown className="ml-1 h-3 w-3 opacity-20" />
+              )}
+            </Button>
+          )
+        },
+        cell: ({ row }) => <div className="text-slate-600 dark:text-slate-300 font-medium">{row.getValue(header)}</div>,
+      }
+    })
   }, [headers])
 
   const table = useReactTable({
